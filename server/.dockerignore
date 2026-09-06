@@ -1,0 +1,11 @@
+node_modules
+dist
+.env
+.git
+.gitignore
+*.md
+__tests__
+*.test.ts
+*.test.js
+jest.config.js
+.DS_Store

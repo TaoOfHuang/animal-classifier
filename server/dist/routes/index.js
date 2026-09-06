@@ -1,0 +1,13 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.apiRouter = void 0;
+const express_1 = require("express");
+const animal_1 = require("./animal");
+const recognize_1 = require("./recognize");
+const search_1 = require("./search");
+const taxonomy_1 = require("./taxonomy");
+exports.apiRouter = (0, express_1.Router)();
+exports.apiRouter.use(animal_1.animalRouter);
+exports.apiRouter.use(recognize_1.recognizeRouter);
+exports.apiRouter.use(search_1.searchRouter);
+exports.apiRouter.use(taxonomy_1.taxonomyRouter);

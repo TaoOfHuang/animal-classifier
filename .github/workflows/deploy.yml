@@ -1,0 +1,63 @@
+name: Deploy Server to Tencent Cloud
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'server/**'
+
+env:
+  NODE_VERSION: '20'
+  SERVER_USER: ${{ secrets.SERVER_USER }}
+  SERVER_IP: ${{ secrets.SERVER_IP }}
+  SERVER_DIR: /home/${{ secrets.SERVER_USER }}/animal-classifier-server
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && contains(github.event.head_commit.files, 'server/')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: server/package.json
+
+      - name: Install dependencies
+        working-directory: server
+        run: npm ci --omit=dev
+
+      - name: Run tests
+        working-directory: server
+        run: npm test
+
+      - name: Build
+        working-directory: server
+        run: npm run build
+
+      - name: Upload to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ env.SERVER_IP }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          source: "server/dist server/package.json server/package-lock.json server/.env.example"
+          target: "${{ env.SERVER_DIR }}"
+          strip_components: 1
+
+      - name: Restart service on server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ env.SERVER_IP }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            cd ${{ env.SERVER_DIR }}
+            npm ci --omit=dev
+            pm2 restart animal-api || pm2 start dist/index.js --name animal-api
+            pm2 save

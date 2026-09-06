@@ -1,0 +1,21 @@
+services:
+  api:
+    build: .
+    container_name: animal-classifier-api
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      - PORT=3000
+    # If you need to override specific env vars here:
+    # environment:
+    #   API_TOKEN: "your-token"
+    #   AI_BASE_URL: "http://192.168.5.3:1234"
+    networks:
+      - animal-network
+
+networks:
+  animal-network:
+    driver: bridge

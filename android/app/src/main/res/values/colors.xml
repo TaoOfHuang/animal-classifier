@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 启动画面背景色 - 大地深棕色 -->
+    <color name="splash_background">#1a1612</color>
+    
+    <!-- 主题色 -->
+    <color name="primary">#3d5a3d</color>
+    <color name="primary_light">#5a7a5a</color>
+    <color name="accent">#d4a84b</color>
+</resources>
