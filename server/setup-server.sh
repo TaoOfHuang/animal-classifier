@@ -70,11 +70,16 @@ main() {
   # 3. 安装依赖
   log_info "正在安装项目依赖..."
   cd "$server_dir"
-  npm ci --omit=dev
+  # build 需要 typescript 等 devDependencies,先装全量依赖
+  npm ci
 
   # 4. 构建
   log_info "正在构建项目..."
   npm run build
+
+  # 构建完成后移除开发依赖,减小生产环境体积
+  log_info "正在移除开发依赖..."
+  npm prune --omit=dev
 
   # 5. 检查 .env
   if [ ! -f .env ]; then

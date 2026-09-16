@@ -98,15 +98,7 @@ export const recognizeAnimal = async (
     ...payload.data,
     animal: {
       ...payload.data.animal,
-      taxonomy: payload.data.animal.taxonomy || {
-        kingdom: { scientificName: 'Animalia', commonNameZh: '动物界' },
-        phylum: { scientificName: 'Chordata', commonNameZh: '脊索动物' },
-        class: { scientificName: 'Mammalia', commonNameZh: '哺乳纲' },
-        order: { scientificName: 'Carnivora', commonNameZh: '食肉目' },
-        family: { scientificName: 'Felidae', commonNameZh: '猫科' },
-        genus: { scientificName: 'Panthera', commonNameZh: '豹属' },
-        species: { scientificName: 'Panthera tigris', commonNameZh: '虎' },
-      },
+      taxonomy: payload.data.animal.taxonomy || {},
       images: payload.data.animal.images || [prepared.uri],
     },
     timestamp: payload.data.timestamp || Date.now(),

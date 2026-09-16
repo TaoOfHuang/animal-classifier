@@ -25,7 +25,7 @@ describe('recognizeAnimal', () => {
         },
       }),
     });
-    globalThis.fetch = fetchMock as unknown as typeof fetch);
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
     const imageUri = 'file:///tmp/tiger.jpg';
 
     const result = await recognizeAnimal(imageUri);
@@ -57,7 +57,7 @@ describe('recognizeAnimal', () => {
         },
       }),
     });
-    globalThis.fetch = fetchMock as unknown as typeof fetch);
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     const result = await recognizeAnimal('file:///tmp/panda.jpg', {
       base64: 'abc123',

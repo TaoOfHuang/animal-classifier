@@ -244,34 +244,58 @@ AnimalClassifier/
 
 - [x] 创建 Node.js + Express 后端基础骨架（TypeScript）
 - [x] API 路由基础结构与统一错误响应
-- [x] `POST /api/recognize` mock 接口
-- [x] `GET /api/search` mock 接口
-- [x] `GET /api/animal/:id` mock 接口
-- [x] `GET /api/taxonomy/:level/:name` mock 接口
+- [x] `POST /api/recognize` 接口（LLM 视觉识别 + ITIS/IUCN 富化）
+- [x] `GET /api/search` 接口（含 `GET /api/search/suggestions`）
+- [x] `GET /api/animal/:id` 接口（按学名解析，未知物种返回 404）
+- [x] `GET /api/taxonomy/:level/:name` 接口（契约对齐 `current/parent/childCount`）
+- [x] `GET /api/taxonomy/:level/:name/children` 接口（分类树懒加载）
+- [x] `GET /api/taxonomy/search` 接口（支持中文入口）
 - [x] 后端 health 检查与端口配置校验
-- [x] ITIS API 集成（分类数据，失败兜底）
-- [x] IUCN API 集成（濒危信息，失败兜底）
+- [x] ITIS API 集成（学名检索 + 完整谱系 + 中文名字典）
+- [x] IUCN API 集成（Provider 抽象；`static` 默认，`iucn_v4` 需 token）
 - [x] Unsplash/Pexels API 集成（动物图片，失败兜底）
+- [x] 错误处理和重试机制（仅 5xx 与网络错误重试 + 退避；4xx 不重试）
 
 **待完成：**
 
-- [ ] OpenAI Vision API 集成
-- [ ] 错误处理和重试机制
+- [x] IUCN v4 token 申请与实网验证（2026-09-17 实测三跳链路 + Provider 解析通过）
+- [ ] 接入独立的 Vision API（当前实际走 DeepSeek V4.1 Flash 视觉模型）
 
 **后端验证：**
 
-- `cd server && npm test` ✅ (9 suites, 10 tests)
+- `cd server && npm test` ✅ (17 suites, 155 tests)
+- 前端 `npm test` ✅ (12 suites, 158 tests)
+- 上游失败路径均有对应用例：ITIS 404 / 超时 / 网络错误 / 5xx，IUCN 401 / 403 / 404 / 5xx / 缺 token
+  （401 与 403 的实际语义区分见 `server/src/services/conservation/README.md` 第 2 节）
 
 **前端联动状态：**
 
-- 已新增 `src/services/api.ts`，默认后端地址：`http://10.0.2.2:3000`
-- `recognitionService` 已支持后端开关，当前默认仍为 mock 模式
+- 后端开关已集中到 `src/services/api.ts` 的 `USE_BACKEND_API_DEFAULT`（当前 `true`），
+  `searchService` / `taxonomyService` 都从这里读取，不再各留一份私有常量
+- `requestJson()` 统一解包 `{success, data}` 信封；失败走 `logApiFallback()` 打 `console.error`，
+  不再用 `console.warn` 把故障吞掉
+- ⚠️ 改动该开关后**必须复查前端 service 的既有测试**：断言 mock 分支的用例会真的去打网络并挂住
 
 **第三方 API 环境变量（server/.env）：**
 
+- `CONSERVATION_SOURCE=static`（濒危信息数据源；改 `iucn_v4` 需下方 token）
 - `IUCN_API_TOKEN=`
 - `UNSPLASH_ACCESS_KEY=`
 - `PEXELS_API_KEY=`
+
+**IUCN 合规说明（当前选型的理由）**
+
+IUCN ToU 明确写明 API 面向**教育 / 研究**用途，并提示
+"may need to restrict access if … such as mobile app development"，商业用途严禁。
+本项目是 Android App，因此**不把 IUCN v4 设为唯一路径**：
+
+- 抽象出 `ConservationProvider` 接口，离线实现 `staticProvider`（本地数据集）、
+  在线实现 `iucnV4Provider`
+- 默认 `CONSERVATION_SOURCE=static`，在线 v4 只作为**可切换选项**，不作为唯一依赖
+- v4 接口契约实测记录见 `server/src/services/conservation/README.md`
+  （鉴权头是裸 token 而非 Bearer、三跳链路、population 常是区间等坑）
+
+**核对时间：** 以上状态据 2026-09-16 的实际代码与测试结果逐项核对。
 
 ---
 
@@ -430,8 +454,8 @@ AnimalClassifier/
   - 配置深棕色主题背景
 - [x] 应用签名配置
   - 配置 debug 签名
-  - 添加 release 签名模板（gradle.properties）
-  - 更新 build.gradle 支持发布签名
+  - 添加 release 签名模板（`android/keystore.properties.example`，真实密码不入库）
+  - 更新 build.gradle 支持发布签名（含「未配置即回退 debug 签名」的保护与提示）
 - [x] 构建脚本
   - `npm run build:android` - 构建 Release APK
   - `npm run build:android:bundle` - 构建 AAB（Google Play）
@@ -531,44 +555,56 @@ full: 9999; // 全圆角（胶囊形）
 
 ```
 POST /api/recognize
-Content-Type: multipart/form-data
+Content-Type: application/json
 
 Request:
-- image: File (图片文件)
+- image: string (图片 base64 data URL 或本地 uri)
+- 需要 Authorization: Bearer <API_TOKEN>
 
 Response:
 {
   "success": true,
   "data": {
     "animal": {
-      "id": "string",
+      "id": "Panthera tigris",
       "commonNameZh": "东北虎",
       "commonNameEn": "Siberian Tiger",
-      "scientificName": "Panthera tigris altaica",
+      "scientificName": "Panthera tigris",
       "taxonomy": { ... },
       "conservationStatus": { ... }
     },
-    "confidence": 0.985
+    "confidence": 0.985,
+    "dataSources": {
+      "taxonomy": "itis",
+      "conservation": "static"
+    }
   }
 }
 ```
+
+> `dataSources.taxonomy` 取值 `itis | llm | none`，`dataSources.conservation` 取值
+> `iucn_v4 | static | none`，用于区分「这条数据到底来自哪」。
+> LLM 给出的 taxonomy 会被 ITIS 结果覆盖；ITIS 查不到时保留 LLM 的结果。
+> 两个上游各自独立降级，任一方失败都不会让整个请求失败。
 
 ### 获取动物详情
 
 ```
 GET /api/animal/:id
 
+:id 为学名（也接受中文俗名，如 东北虎）
+
 Response:
 {
   "success": true,
   "data": {
-    "id": "string",
+    "id": "Panthera tigris",
     "commonNameZh": "东北虎",
     "commonNameEn": "Siberian Tiger",
-    "scientificName": "Panthera tigris altaica",
+    "scientificName": "Panthera tigris",
     "taxonomy": {
       "kingdom": { "scientificName": "Animalia", "commonNameZh": "动物界" },
-      "phylum": { "scientificName": "Chordata", "commonNameZh": "脊索动物" },
+      "phylum": { "scientificName": "Chordata", "commonNameZh": "脊索动物门" },
       ...
     },
     "images": ["url1", "url2"],
@@ -580,10 +616,20 @@ Response:
       "population": 500,
       "populationTrend": "stable",
       "assessmentYear": 2021
-    }
+    },
+    "dataSources": { "taxonomy": "itis", "conservation": "static" }
   }
 }
 ```
+
+未知物种返回 **404**：
+
+```json
+{ "success": false, "error": { "code": "ANIMAL_NOT_FOUND", "message": "No animal found for \"...\"" } }
+```
+
+> 上游不可达且本地也查不到时返回 **502 `ANIMAL_UPSTREAM_FAILED`**，而不是 404
+> —— 「上游挂了」不等于「没有这个物种」。`:id` 为空则 400 `INVALID_ANIMAL_ID`。
 
 ### 搜索动物
 
@@ -605,12 +651,28 @@ Response:
         "familyZh": "熊科",
         "thumbnailUrl": "..."
       }
-    ]
+    ],
+    "hasMore": false
   }
 }
 ```
 
-### 获取分类树
+> `q` 为空直接返回空结果集；上游失败时降级为 `200 + 空结果`，不让前端吃 500。
+> 参数非法（`limit` 超 50 等）返回 400 `INVALID_SEARCH_QUERY`。
+
+### 搜索自动补全
+
+```
+GET /api/search/suggestions?q=虎&limit=5
+
+Response:
+{
+  "success": true,
+  "data": { "suggestions": ["虎", "东北虎", "雪豹"] }
+}
+```
+
+### 获取分类树（详情）
 
 ```
 GET /api/taxonomy/family/Felidae
@@ -620,23 +682,70 @@ Response:
   "success": true,
   "data": {
     "current": {
+      "id": "180580",
       "level": "family",
       "scientificName": "Felidae",
       "commonNameZh": "猫科"
     },
-    "parent": { ... },
+    "parent": { "id": "180539", "level": "order", "scientificName": "Carnivora", "commonNameZh": "食肉目" },
+    "childCount": 14
+  }
+}
+```
+
+> 契约是 `{ current, parent, childCount }` —— **不再返回 `children`**（历史实现返回 children，
+> 前端拿到的永远是 `undefined`）。`:name` 必须真的属于所请求的 `:level`，否则 404 `TAXONOMY_NOT_FOUND`
+> （例如 `family/Panthera` 会被拒掉，而不是悄悄当成 Felidae）。
+> 层级非法 → 400 `INVALID_TAXONOMY_LEVEL`；`:name` 未过白名单 → 400 `INVALID_TAXONOMY_QUERY`；
+> 上游不可达 → 502 `TAXONOMY_UPSTREAM_FAILED`。
+
+### 获取分类树（子节点，懒加载）
+
+```
+GET /api/taxonomy/genus/Panthera/children?limit=10&offset=0
+
+Response:
+{
+  "success": true,
+  "data": {
     "children": [
       {
-        "level": "genus",
-        "scientificName": "Panthera",
-        "commonNameZh": "豹属",
-        "childCount": 5
-      },
-      ...
+        "id": "183805",
+        "level": "species",
+        "scientificName": "Panthera tigris",
+        "commonNameZh": "虎"
+      }
+    ],
+    "hasMore": true,
+    "total": 5,
+    "childLevel": "species"
+  }
+}
+```
+
+> 走 ITIS `getHierarchyDownFromTSN`（只返回直接下级，正好对应懒加载语义），
+> 分页在内存里 `slice`；`childLevel` 供前端校验层级连续性。
+> `limit` 默认 20、上限 100。
+
+### 搜索分类
+
+```
+GET /api/taxonomy/search?q=虎&level=species
+
+Response:
+{
+  "success": true,
+  "data": {
+    "results": [
+      { "id": "183805", "level": "species", "scientificName": "Panthera tigris", "commonNameZh": "虎" }
     ]
   }
 }
 ```
+
+> 支持中文输入：先经本地中文名字典归一化到学名，再去 ITIS 检索
+> （ITIS 实测不认中文，`srchKey=东北虎` 命中 0 条）。字典未收录的中文名直接返回空，不白跑一次上游。
+> 检索失败降级为 `200 + 空 results`，不返回 500。
 
 ---
 
@@ -704,14 +813,29 @@ keytool -genkeypair -v -storetype PKCS12 \
 
 ### 配置签名信息
 
-在 `android/gradle.properties` 中添加（不要提交到版本控制）：
+密码**不放在 `android/gradle.properties`**（该文件会被提交到 Git）。正确做法是复制模板：
+
+```bash
+cp android/keystore.properties.example android/keystore.properties
+```
+
+然后在 `android/keystore.properties` 中填入四项（键名小写，`storeFile` 相对 `android/app/` 解析）：
 
 ```properties
-RELEASE_STORE_FILE=release.keystore
-RELEASE_KEY_ALIAS=animal-classifier
-RELEASE_STORE_PASSWORD=your_store_password
-RELEASE_KEY_PASSWORD=your_key_password
+storeFile=release.keystore
+storePassword=your_store_password
+keyAlias=animal-classifier
+keyPassword=your_key_password
 ```
+
+> `android/keystore.properties` 已被 `.gitignore` 忽略，不会进入版本库。
+> `app/build.gradle` 的读取顺序为 **`android/keystore.properties` → `-PRELEASE_*` 命令行参数**，
+> 临时传入可写 `./gradlew assembleRelease -PRELEASE_STORE_FILE=... -PRELEASE_STORE_PASSWORD=...`。
+>
+> 四项**缺任意一项**即视为未配置：release 构建会**回退到 debug 签名**并在任务开始时打印
+> `[signing] ✗ 未配置发布签名…`。这种包仅可用于本地测性能，**无法上架应用商店**。
+>
+> ⚠️ keystore 文件与密码请单独备份——丢失后将无法再更新已上架的应用。
 
 ### 构建发布版
 
@@ -732,10 +856,18 @@ npm run build:android:bundle
 1. ~~**Android Studio 配置** - 需要完成环境配置才能运行应用~~ ✅ 已完成
 2. **图标组件** - 当前使用 Unicode 符号，后续考虑使用 react-native-vector-icons
 3. ~~**相机权限** - 需要在 AndroidManifest.xml 中添加相机权限~~ ✅ 已完成
-4. **API Key 管理** - 需要安全存储 OpenAI 等 API 密钥
+4. **API Key 管理** - 密钥目前集中在 `server/.env`（已被 `.gitignore` 忽略），
+   生产环境建议改用密钥管理服务
 5. **离线支持** - 考虑添加基础的离线数据包
 6. ~~**创建 Android 模拟器** - 需要在 Android Studio 中创建 AVD 才能测试应用~~ ✅ 已完成
-7. **OpenAI Vision API** - 待集成真实图像识别功能
+7. **接入独立 Vision API** - 当前实际走 DeepSeek V4.1 Flash 视觉模型（`AI_PROVIDER=deepseek`）
+8. ~~**IUCN v4 token** - 需到 api.iucnredlist.org 重新注册并实网验证~~ ✅ 已完成
+   （2026-09-17 实网验证：token 有效，三跳链路与 Provider 解析均正确；默认仍走离线数据集）
+9. **⚠️ 轮换已泄露的 Unsplash key** - `owXiMjCjNG-…` 已随初始提交（`a92f875`）进入
+   **Git 历史**，`server/.env.example` 与 `server/DEPLOYMENT.md` 都提交过。
+   工作区里这两个文件现已换成占位符，但 `git log -S` 仍能在历史中检出该 key，
+   因此**必须在 Unsplash 后台 revoke 并重新签发**；如需从历史中彻底抹除，
+   还需用 `git filter-repo` 改写历史后强推（会影响所有协作者）。
 
 ---
 
@@ -743,12 +875,11 @@ npm run build:android:bundle
 
 - [React Native 官方文档](https://reactnative.dev/)
 - [React Navigation 文档](https://reactnavigation.org/)
-- [OpenAI Vision API](https://platform.openai.com/docs/guides/vision)
 - [ITIS API](https://www.itis.gov/ws_description.html)
-- [IUCN Red List API](https://apiv3.iucnredlist.org/)
+- [IUCN Red List API](https://api.iucnredlist.org/)（v3 已于 2025-03-27 下线）
 - [Unsplash API](https://unsplash.com/developers)
 
 ---
 
-_最后更新：2026-04-14_
-_Phase 7 完成_
+_最后更新：2026-09-16_
+_Phase 3 的 ITIS / IUCN 集成已与事实对齐（原勾选状态早于实际实现）_

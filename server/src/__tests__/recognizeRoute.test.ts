@@ -24,8 +24,10 @@ describe('POST /api/recognize', () => {
         commonNameZh: '大熊猫',
         commonNameEn: 'Giant Panda',
         scientificName: 'Ailuropoda melanoleuca',
+        taxonomy: {},
       },
       confidence: 0.87,
+      dataSources: { taxonomy: 'llm', conservation: 'static' },
     });
   });
 

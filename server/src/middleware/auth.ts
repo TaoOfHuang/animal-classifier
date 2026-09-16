@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { ApiErrorBody } from '../types/api';
+import { logger } from '../utils/logger';
 
 // ── In-memory daily call counter ────────────────────────────────────
 // Key: "YYYY-MM-DD", Value: number of calls made today
@@ -40,6 +41,7 @@ const authMiddleware = (
   }
 
   if (!token || token !== API_TOKEN) {
+    logger.warn('auth', `✗ 401 rejected ${req.method} ${req.path} from ${req.ip}`);
     res.status(401).json({
       success: false,
       error: {
@@ -53,6 +55,7 @@ const authMiddleware = (
   // ── Daily rate limit ──────────────────────────────────────────────
   const count = getDailyCalls();
   if (count >= DAILY_LIMIT) {
+    logger.warn('auth', `✗ 429 rate limit hit (${count}/${DAILY_LIMIT}) ${req.method} ${req.path}`);
     res.status(429).json({
       success: false,
       error: {

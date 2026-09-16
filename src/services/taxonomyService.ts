@@ -3,10 +3,7 @@
 
 import { TaxonomyNode, TaxonomyInfo, TaxonomyItem } from '../types';
 import { TaxonomyLevel } from '../constants/taxonomy';
-import { API_BASE_URL } from './api';
-
-// 是否使用后端 API（当前为 mock 模式）
-const USE_BACKEND_API = false;
+import { isBackendApiEnabled, logApiFallback, requestJson } from './api';
 
 // 分类层级顺序
 const TAXONOMY_ORDER: TaxonomyLevel[] = [
@@ -321,25 +318,28 @@ const delay = (ms: number) =>
   new Promise<void>(resolve => setTimeout(resolve, ms));
 
 // 获取分类节点的子节点（懒加载）
+// fallbackChildren: 当 mock 数据中没有该节点的子节点时，使用调用方提供的兜底子树
+// （例如识别结果里动物自身的属/种），保证任意动物都能展示自己的分类路径
 export const fetchTaxonomyChildren = async (
   parentId: string,
   parentLevel: TaxonomyLevel,
   limit: number = 10,
   offset: number = 0,
+  fallbackChildren: TaxonomyNode[] = [],
 ): Promise<{ children: TaxonomyNode[]; hasMore: boolean; total: number }> => {
-  if (USE_BACKEND_API) {
+  if (isBackendApiEnabled()) {
+    const path = `/api/taxonomy/${parentLevel}/${encodeURIComponent(
+      parentId,
+    )}/children?limit=${limit}&offset=${offset}`;
+
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/api/taxonomy/${parentLevel}/${parentId}/children?limit=${limit}&offset=${offset}`,
-      );
-      if (!response.ok) throw new Error('API error');
-      return (await response.json()) as {
+      return await requestJson<{
         children: TaxonomyNode[];
         hasMore: boolean;
         total: number;
-      };
+      }>(path);
     } catch (error) {
-      console.warn('Failed to fetch from API, using mock data:', error);
+      logApiFallback('fetchTaxonomyChildren', path, error);
     }
   }
 
@@ -360,6 +360,9 @@ export const fetchTaxonomyChildren = async (
     allChildren = MOCK_PANTHERA_SPECIES;
   } else if (parentId === 'felis') {
     allChildren = MOCK_FELIS_SPECIES;
+  } else {
+    // mock 数据未覆盖的分类，回退到调用方提供的子树（可能为空）
+    allChildren = fallbackChildren;
   }
 
   const children = allChildren.slice(offset, offset + limit);
@@ -397,19 +400,17 @@ export const fetchTaxonomyDetail = async (
   parent?: TaxonomyNode;
   childCount: number;
 } | null> => {
-  if (USE_BACKEND_API) {
+  if (isBackendApiEnabled()) {
+    const path = `/api/taxonomy/${level}/${encodeURIComponent(scientificName)}`;
+
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/api/taxonomy/${level}/${encodeURIComponent(scientificName)}`,
-      );
-      if (!response.ok) throw new Error('API error');
-      return (await response.json()) as {
+      return await requestJson<{
         current: TaxonomyNode;
         parent?: TaxonomyNode;
         childCount: number;
-      };
+      }>(path);
     } catch (error) {
-      console.warn('Failed to fetch taxonomy detail:', error);
+      logApiFallback('fetchTaxonomyDetail', path, error);
     }
   }
 
@@ -448,17 +449,16 @@ export const searchTaxonomy = async (
   query: string,
   level?: TaxonomyLevel,
 ): Promise<TaxonomyNode[]> => {
-  if (USE_BACKEND_API) {
+  if (isBackendApiEnabled()) {
+    const path = level
+      ? `/api/taxonomy/search?q=${encodeURIComponent(query)}&level=${level}`
+      : `/api/taxonomy/search?q=${encodeURIComponent(query)}`;
+
     try {
-      const url = level
-        ? `${API_BASE_URL}/api/taxonomy/search?q=${encodeURIComponent(query)}&level=${level}`
-        : `${API_BASE_URL}/api/taxonomy/search?q=${encodeURIComponent(query)}`;
-      const response = await fetch(url);
-      if (!response.ok) throw new Error('API error');
-      const data = (await response.json()) as { results?: TaxonomyNode[] };
+      const data = await requestJson<{ results?: TaxonomyNode[] }>(path);
       return data.results || [];
     } catch (error) {
-      console.warn('Failed to search taxonomy:', error);
+      logApiFallback('searchTaxonomy', path, error);
     }
   }
 

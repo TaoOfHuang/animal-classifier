@@ -39,7 +39,8 @@ log_info "============================================"
 # 1. 本地构建
 log_info "Step 1/4: 本地构建..."
 cd "$LOCAL_SERVER_DIR"
-npm ci --omit=dev
+# build 依赖 typescript(devDependency),不能用 --omit=dev
+npm ci
 npm run build
 
 # 2.  rsync 上传（排除 node_modules 和 dist）
@@ -58,7 +59,9 @@ rsync -avz \
 log_info "Step 3/4: 远程安装依赖并启动..."
 ssh -o StrictHostKeyChecking=accept-new "${SERVER_USER}@${SERVER_IP}" <<'REMOTE_SCRIPT'
   set -e
-  cd /home/${SERVER_USER}/animal-classifier-server
+  # 注意: heredoc 用了 'REMOTE_SCRIPT',本地变量不会展开,
+  # 因此这里必须用远程 shell 自己的 $HOME,不能引用 ${SERVER_USER}。
+  cd "$HOME/animal-classifier-server"
 
   # 检查并安装 Node.js
   if ! command -v node &>/dev/null || [ "$(node -v 2>/dev/null | cut -d. -f1 | tr -d v)" -lt 18 ]; then
@@ -76,8 +79,11 @@ ssh -o StrictHostKeyChecking=accept-new "${SERVER_USER}@${SERVER_IP}" <<'REMOTE_
   fi
 
   # 安装依赖 + 构建
-  npm ci --omit=dev
+  # 注意: build 需要 typescript 等 devDependencies,必须先装全量依赖,
+  # 构建完成后再 prune 掉开发依赖。直接用 npm ci --omit=dev 会导致 tsc 找不到。
+  npm ci
   npm run build
+  npm prune --omit=dev
 
   # 启动服务
   pm2 delete animal-api 2>/dev/null || true

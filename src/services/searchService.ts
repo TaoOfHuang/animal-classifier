@@ -2,10 +2,7 @@
 // 提供动物搜索、自动补全、历史记录管理
 
 import { Animal, SearchResult } from '../types';
-import { API_BASE_URL } from './api';
-
-// 是否使用后端 API
-const USE_BACKEND_API = false;
+import { isBackendApiEnabled, logApiFallback, requestJson } from './api';
 
 // 本地搜索历史（内存缓存，后续可持久化到 MMKV）
 let searchHistory: string[] = [];
@@ -166,28 +163,28 @@ export const searchAnimals = async (
 }> => {
   const { limit = 10, offset = 0, family } = options || {};
 
-  if (USE_BACKEND_API) {
-    try {
-      const params = new URLSearchParams({
-        q: query,
-        limit: String(limit),
-        offset: String(offset),
-      });
-      if (family) params.append('family', family);
+  if (isBackendApiEnabled()) {
+    const params = new URLSearchParams({
+      q: query,
+      limit: String(limit),
+      offset: String(offset),
+    });
+    if (family) params.append('family', family);
+    const path = `/api/search?${params}`;
 
-      const response = await fetch(`${API_BASE_URL}/api/search?${params}`);
-      if (!response.ok) throw new Error('API error');
-      const data = (await response.json()) as {
+    try {
+      const data = await requestJson<{
         items?: SearchResult[];
         total?: number;
-      };
+      }>(path);
+
       return {
         results: data.items || [],
         total: data.total || 0,
         hasMore: offset + limit < (data.total || 0),
       };
     } catch (error) {
-      console.warn('Failed to search from API, using mock:', error);
+      logApiFallback('searchAnimals', path, error);
     }
   }
 
@@ -225,16 +222,14 @@ export const getSearchSuggestions = async (
 ): Promise<string[]> => {
   if (!query.trim()) return [];
 
-  if (USE_BACKEND_API) {
+  if (isBackendApiEnabled()) {
+    const path = `/api/search/suggestions?q=${encodeURIComponent(query)}&limit=${limit}`;
+
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/api/search/suggestions?q=${encodeURIComponent(query)}&limit=${limit}`,
-      );
-      if (!response.ok) throw new Error('API error');
-      const data = (await response.json()) as { suggestions?: string[] };
+      const data = await requestJson<{ suggestions?: string[] }>(path);
       return data.suggestions || [];
     } catch (error) {
-      console.warn('Failed to get suggestions from API:', error);
+      logApiFallback('getSearchSuggestions', path, error);
     }
   }
 
@@ -305,13 +300,13 @@ export const getHotSearchTerms = (): string[] => {
 
 // 获取动物详情
 export const getAnimalDetail = async (id: string): Promise<Animal | null> => {
-  if (USE_BACKEND_API) {
+  if (isBackendApiEnabled()) {
+    const path = `/api/animal/${encodeURIComponent(id)}`;
+
     try {
-      const response = await fetch(`${API_BASE_URL}/api/animal/${id}`);
-      if (!response.ok) throw new Error('API error');
-      return (await response.json()) as Animal;
+      return await requestJson<Animal>(path);
     } catch (error) {
-      console.warn('Failed to get animal detail from API:', error);
+      logApiFallback('getAnimalDetail', path, error);
     }
   }
 

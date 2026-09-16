@@ -20,6 +20,7 @@ export const errorHandler = (
   res: Response<ApiErrorBody>,
   _next: NextFunction,
 ): void => {
+  console.error('[errorHandler]', err.stack || err);
   res.status(500).json({
     success: false,
     error: {

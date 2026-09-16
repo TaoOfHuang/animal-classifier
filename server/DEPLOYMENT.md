@@ -133,8 +133,11 @@ rsync -avz \
 cd ~/animal-classifier-server
 
 # 3. 安装依赖 + 构建
-npm ci --omit=dev
+# build 需要 typescript 等 devDependencies，必须先装全量依赖
+npm ci
 npm run build
+# 构建完成后再移除开发依赖
+npm prune --omit=dev
 
 # 4. 配置 .env
 cp .env.example .env
@@ -260,18 +263,32 @@ API_TOKEN=your-random-token-here
 
 # AI 提供商配置
 AI_PROVIDER=ollama
-AI_BASE_URL=http://192.168.5.3:1234
+AI_BASE_URL=http://192.168.5.8:1234
 AI_API_KEY=
 AI_MODEL=qwen/qwen3.6-35b-a3b
 
 # 每日调用限制（0 = 不限制）
 AI_RECOGNIZE_DAILY_LIMIT=100
 
-# 其他 API 密钥（可选）
+# 濒危信息数据源：static（本地离线数据集，默认）| iucn_v4（在线 v4 API，需下方 token）
+# 默认 static 的原因见 docs/plans/2026-09-13-itis-iucn-integration.md「前置决策 1」（IUCN ToU 限制）
+# 注意：填了非法值会让服务直接启动失败（fail fast），不会静默退回默认值
+CONSERVATION_SOURCE=static
+
+# IUCN v4 token —— 仅 CONSERVATION_SOURCE=iucn_v4 时需要
+# 为空时启动期只打印告警，不阻断启动（聚合层会把单个物种的失败降级掉）
+# v3 已于 2025-03-27 下线且官方明确账号不迁移，需到 api.iucnredlist.org 重新注册
 IUCN_API_TOKEN=
-UNSPLASH_ACCESS_KEY=owXiMjCjNG-o2Ebr5R6vNqgmW9iM8a5oMIFYix1L44o
+
+# ITIS 无需 token（公开端点）
+
+# 图片源（可选）
+UNSPLASH_ACCESS_KEY=your-unsplash-access-key
 PEXELS_API_KEY=
 ```
+
+> 分类信息（ITIS）与濒危信息（IUCN）的接口契约实测记录见
+> `server/src/services/conservation/README.md`。
 
 ### 前端 `src/services/api.ts`
 
@@ -295,7 +312,19 @@ openssl rand -hex 32
 
 ### Q: 服务器内存不足怎么办？
 
-Docker 方案中已设置 `--max-memory-restart 500M`，PM2 会自动在内存超限时重启。
+- **PM2 方案**：`deploy.sh` / `setup-server.sh` 启动服务时已带 `--max-memory-restart 500M`，内存超限时 PM2 会自动重启进程。
+- **Docker 方案**：`docker-compose.yml` 默认**没有**内存限制（`--max-memory-restart` 是 PM2 的参数，对 Docker 无效）。需要限制的话，在 `api` 服务下手动加：
+
+```yaml
+services:
+  api:
+    # ... 其他配置
+    mem_limit: 500m
+    # 软限制（可选，达到后容器进入限速状态）
+    mem_reservation: 256m
+```
+
+修改后执行 `docker compose up -d` 生效。注意 Docker 是硬限制（超限会被 OOM kill 后按 `restart` 策略重启），不像 PM2 那样平滑重启。
 
 ### Q: 如何查看服务日志？
 
@@ -309,11 +338,16 @@ pm2 logs animal-api
 
 ### Q: 如何回滚到上一个版本？
 
+> 说明：Docker 方案的镜像是**本地构建**的（`build: .`），并非从仓库拉取，所以 `docker compose pull` 对本项目无效，必须切回代码版本后重新构建。
+
 ```bash
 # Docker
-docker compose pull && docker compose up -d
+git checkout <上一个正常的 commit>
+docker compose up -d --build
 
 # PM2
+git checkout <上一个正常的 commit>
+npm ci && npm run build && npm prune --omit=dev
 pm2 restart animal-api
 ```
 

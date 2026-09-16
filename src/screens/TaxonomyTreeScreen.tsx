@@ -64,17 +64,50 @@ export const TaxonomyTreeScreen: React.FC = () => {
     }));
   }, [animal.taxonomy]);
 
+  // mock 数据未覆盖该科时，用识别结果里的属/种构造兜底子树，
+  // 保证任意识别出的动物都能展示自己的分类路径
+  const fallbackChildren = useMemo((): TaxonomyNode[] => {
+    const genus = animal.taxonomy?.genus;
+    const species = animal.taxonomy?.species;
+    if (!genus?.scientificName) return [];
+    return [
+      {
+        id: genus.scientificName.toLowerCase(),
+        level: 'genus',
+        scientificName: genus.scientificName,
+        commonNameZh: genus.commonNameZh || genus.scientificName,
+        childCount: species ? 1 : 0,
+        isCurrent: true,
+        children: species?.scientificName
+          ? [
+              {
+                id: species.scientificName.toLowerCase(),
+                level: 'species',
+                scientificName: species.scientificName,
+                commonNameZh: species.commonNameZh || species.scientificName,
+              },
+            ]
+          : undefined,
+      },
+    ];
+  }, [animal.taxonomy]);
+
   // 加载根节点数据
   const loadRootData = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const familyName = animal.taxonomy?.family?.scientificName || 'Felidae';
+      const familyName = animal.taxonomy?.family?.scientificName;
+      if (!familyName) {
+        setRootNodes([]);
+        return;
+      }
       const result = await fetchTaxonomyChildren(
         familyName.toLowerCase(),
         'family',
         10,
         0,
+        fallbackChildren,
       );
 
       // 标记当前动物所属的节点
@@ -92,7 +125,7 @@ export const TaxonomyTreeScreen: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [animal]);
+  }, [animal, fallbackChildren]);
 
   // 初始加载
   useEffect(() => {

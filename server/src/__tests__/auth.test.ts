@@ -25,8 +25,10 @@ describe('POST /api/recognize (token-auth mode)', () => {
         commonNameZh: 'test',
         commonNameEn: 'test',
         scientificName: 'test',
+        taxonomy: {},
       },
       confidence: 1,
+      dataSources: { taxonomy: 'none', conservation: 'none' },
     });
     // Reset the daily counter so each test starts fresh
     resetDailyCounter();

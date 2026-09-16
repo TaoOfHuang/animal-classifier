@@ -60,6 +60,25 @@ react {
 def enableProguardInReleaseBuilds = false
 
 /**
+ * ── 发布签名配置 ──────────────────────────────────────────────────
+ * 读取顺序：android/keystore.properties（推荐）> -PRELEASE_* 命令行参数。
+ * keystore.properties 已在 .gitignore 中忽略，密码不会进入版本库。
+ */
+def keystorePropertiesFile = rootProject.file("keystore.properties")
+def keystoreProperties = new Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
+def releaseStoreFile = keystoreProperties.getProperty('storeFile') ?: project.findProperty('RELEASE_STORE_FILE')
+def releaseStorePassword = keystoreProperties.getProperty('storePassword') ?: project.findProperty('RELEASE_STORE_PASSWORD')
+def releaseKeyAlias = keystoreProperties.getProperty('keyAlias') ?: project.findProperty('RELEASE_KEY_ALIAS')
+def releaseKeyPassword = keystoreProperties.getProperty('keyPassword') ?: project.findProperty('RELEASE_KEY_PASSWORD')
+
+// 四项齐全才算配置了正式签名，否则 release 构建会回退到 debug 签名
+def hasReleaseSigning = [releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword].every { it != null }
+
+/**
  * The preferred build flavor of JavaScriptCore (JSC)
  *
  * For example, to use the international variant, you can use:
@@ -94,11 +113,11 @@ android {
             keyPassword 'android'
         }
         release {
-            if (project.hasProperty('RELEASE_STORE_FILE')) {
-                storeFile file(RELEASE_STORE_FILE)
-                storePassword RELEASE_STORE_PASSWORD
-                keyAlias RELEASE_KEY_ALIAS
-                keyPassword RELEASE_KEY_PASSWORD
+            if (hasReleaseSigning) {
+                storeFile file(releaseStoreFile)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
             }
         }
     }
@@ -107,7 +126,9 @@ android {
             signingConfig signingConfigs.debug
         }
         release {
-            signingConfig project.hasProperty('RELEASE_STORE_FILE') ? signingConfigs.release : signingConfigs.debug
+            // 未配置正式签名时会回退到 debug 签名（仅便于本地测性能），
+            // 这种包无法上架应用商店，也不能用于正式分发。
+            signingConfig hasReleaseSigning ? signingConfigs.release : signingConfigs.debug
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
         }
@@ -122,5 +143,21 @@ dependencies {
         implementation("com.facebook.react:hermes-android")
     } else {
         implementation jscFlavor
+    }
+}
+
+/**
+ * 打 release 包时打印签名状态，防止再用 debug 签名的包去发布/上架。
+ */
+tasks.configureEach { task ->
+    if (task.name == 'assembleRelease') {
+        task.doFirst {
+            if (hasReleaseSigning) {
+                println "[signing] ✓ 使用正式签名: ${releaseStoreFile} (alias=${releaseKeyAlias})"
+            } else {
+                println "[signing] ✗ 未配置发布签名，release 包将使用 DEBUG 签名，无法上架应用商店！"
+                println "[signing]   请参考 android/keystore.properties.example 完成配置。"
+            }
+        }
     }
 }

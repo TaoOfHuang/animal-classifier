@@ -1,13 +1,12 @@
 // 动物详情页 - 增强版
 // 支持图片轮播、收藏、分享功能
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
-  Image,
   StatusBar,
   TouchableOpacity,
   Dimensions,
@@ -33,6 +32,15 @@ import {
   Icon,
   ImageCarousel,
 } from '../components';
+import { IUCN_STATUS } from '../constants/taxonomy';
+import { getAnimalDetail } from '../services/searchService';
+import {
+  buildLocalAnimal,
+  getIucnLabel,
+  getTrendLabel,
+  isConcerningStatus,
+  mergeRemoteAnimal,
+} from './animalDetail';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -42,54 +50,41 @@ type AnimalDetailNavigationProp = NativeStackNavigationProp<
   'AnimalDetail'
 >;
 
-// 模拟完整动物数据
-const getMockAnimalData = (animal: Partial<Animal>): Animal => ({
-  id: animal.id || 'unknown',
-  commonNameZh: animal.commonNameZh || '未知动物',
-  commonNameEn: animal.commonNameEn || 'Unknown Animal',
-  scientificName: animal.scientificName || '',
-  description: `${animal.commonNameZh}是一种令人惊叹的动物。`,
-  habitat:
-    animal.habitat ||
-    (animal.commonNameZh === '大熊猫'
-      ? '仅分布于中国四川、陕西和甘肃的高山竹林中。栖息地海拔通常在 1,200-3,400 米之间，偏好凉爽湿润的环境，以竹子为主要食物来源。'
-      : '主要分布于俄罗斯远东地区、中国东北部及朝鲜北部。栖息于针阔混交林、落叶阔叶林等森林生态系统，偏好有丰富猎物和水源的区域。'),
-  lifestyle:
-    animal.lifestyle ||
-    (animal.commonNameZh === '大熊猫'
-      ? '大熊猫是独居动物，每天需要花费 12-16 小时进食竹子。虽属于食肉目，但 99% 的食物是竹子。善于爬树，游泳能力也很强。'
-      : '独居动物，领地意识强。主要在晨昏活动，善于游泳。以野猪、马鹿、狍子等有蹄类为主要猎物。雄虎领地可达 1000 平方公里。'),
-  conservationStatus: animal.conservationStatus || {
-    iucnStatus: animal.commonNameZh === '大熊猫' ? 'VU' : 'EN',
-    population: animal.commonNameZh === '大熊猫' ? 1864 : 500,
-    populationTrend: 'increasing',
-    assessmentYear: 2021,
-  },
-  images: animal.images?.length
-    ? animal.images
-    : [
-        'https://images.unsplash.com/photo-1564349683136-77e08dba1ef7?w=800',
-        'https://images.unsplash.com/photo-1527118732049-c88155f2107c?w=800',
-        'https://images.unsplash.com/photo-1540126034813-121bf29033d2?w=800',
-      ],
-  taxonomy: animal.taxonomy || {
-    kingdom: { scientificName: 'Animalia', commonNameZh: '动物界' },
-    phylum: { scientificName: 'Chordata', commonNameZh: '脊索动物门' },
-    class: { scientificName: 'Mammalia', commonNameZh: '哺乳纲' },
-    order: { scientificName: 'Carnivora', commonNameZh: '食肉目' },
-    family: { scientificName: 'Ursidae', commonNameZh: '熊科' },
-    genus: { scientificName: 'Ailuropoda', commonNameZh: '大熊猫属' },
-    species: {
-      scientificName: animal.scientificName || '',
-      commonNameZh: animal.commonNameZh || '',
-    },
-  },
-});
-
 export const AnimalDetailScreen: React.FC = () => {
   const navigation = useNavigation<AnimalDetailNavigationProp>();
   const route = useRoute<AnimalDetailRouteProp>();
-  const animal = getMockAnimalData(route.params.animal);
+
+  // 先用路由参数里的数据渲染（识别链路已经带了 ITIS/IUCN 结果），
+  // 再异步补齐后端详情；后端不可用时保持本地兜底，不阻塞首屏。
+  const [animal, setAnimal] = useState<Animal>(() =>
+    buildLocalAnimal(route.params.animal),
+  );
+
+  const lookupId = route.params.animal.id || route.params.animal.scientificName;
+
+  useEffect(() => {
+    if (!lookupId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    getAnimalDetail(lookupId)
+      .then(remote => {
+        if (cancelled || !remote) {
+          return;
+        }
+        setAnimal(prev => mergeRemoteAnimal(prev, remote));
+      })
+      .catch(error => {
+        // eslint-disable-next-line no-console
+        console.error(`[AnimalDetail] detail fetch failed for ${lookupId}:`, error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [lookupId]);
 
   // 收藏状态
   const [isFavorite, setIsFavorite] = useState(false);
@@ -153,16 +148,22 @@ export const AnimalDetailScreen: React.FC = () => {
     ]);
   }, [animal.scientificName]);
 
-  const isEndangered = ['CR', 'EN', 'VU'].includes(
-    animal.conservationStatus?.iucnStatus || '',
-  );
-  const statusLabels: Record<string, string> = {
-    CR: '极危',
-    EN: '濒危',
-    VU: '易危',
-    NT: '近危',
-    LC: '无危',
-  };
+  // 受威胁及以上（含 EX/EW）才展示保护状态卡片。
+  // 历史上这里只判断 CR/EN/VU，会把「灭绝」当成「不濒危」。
+  const showConservationCard =
+    isConcerningStatus(animal.conservationStatus?.iucnStatus) &&
+    Boolean(animal.conservationStatus);
+  const statusLabel = getIucnLabel(animal.conservationStatus?.iucnStatus);
+  const trendLabel = getTrendLabel(animal.conservationStatus?.populationTrend);
+  const trend = animal.conservationStatus?.populationTrend;
+  const trendIcon =
+    trend === 'increasing' ? 'arrowUp' : trend === 'decreasing' ? 'arrowDown' : 'minus';
+  const trendColor =
+    trend === 'increasing'
+      ? colors.leaf
+      : trend === 'decreasing'
+        ? colors.coral
+        : colors.sand;
 
   return (
     <View style={styles.container}>
@@ -247,24 +248,17 @@ export const AnimalDetailScreen: React.FC = () => {
           <View style={styles.heroInfo}>
             <View style={styles.nameRow}>
               <Text style={styles.heroNameZh}>{animal.commonNameZh}</Text>
-              {isEndangered && (
+              {showConservationCard && animal.conservationStatus && (
                 <View
                   style={[
                     styles.statusBadge,
                     {
                       backgroundColor:
-                        colors.endangered[
-                          animal.conservationStatus
-                            ?.iucnStatus as keyof typeof colors.endangered
-                        ] || colors.sand,
+                        IUCN_STATUS[animal.conservationStatus.iucnStatus].color,
                     },
                   ]}
                 >
-                  <Text style={styles.statusBadgeText}>
-                    {statusLabels[
-                      animal.conservationStatus?.iucnStatus || ''
-                    ] || ''}
-                  </Text>
+                  <Text style={styles.statusBadgeText}>{statusLabel}</Text>
                 </View>
               )}
             </View>
@@ -281,7 +275,7 @@ export const AnimalDetailScreen: React.FC = () => {
               <Icon name="tree" size={20} color={colors.moss} />
               <Text style={styles.quickInfoLabel}>科</Text>
               <Text style={styles.quickInfoValue}>
-                {animal.taxonomy.family?.commonNameZh}
+                {animal.taxonomy.family?.commonNameZh || '—'}
               </Text>
             </View>
             <View style={styles.quickInfoDivider} />
@@ -325,61 +319,26 @@ export const AnimalDetailScreen: React.FC = () => {
           </Card>
 
           {/* 濒危状态卡片 */}
-          {isEndangered && animal.conservationStatus && (
+          {showConservationCard && animal.conservationStatus && (
             <Card variant="danger" style={styles.card}>
               <View style={styles.endangeredHeader}>
                 <EndangeredBadge
-                  status={animal.conservationStatus.iucnStatus as any}
+                  status={animal.conservationStatus.iucnStatus}
                   size="medium"
                 />
                 <View style={styles.trendBadge}>
-                  <Icon
-                    name={
-                      animal.conservationStatus.populationTrend === 'increasing'
-                        ? 'arrowUp'
-                        : animal.conservationStatus.populationTrend ===
-                            'decreasing'
-                          ? 'arrowDown'
-                          : 'minus'
-                    }
-                    size={14}
-                    color={
-                      animal.conservationStatus.populationTrend === 'increasing'
-                        ? colors.leaf
-                        : animal.conservationStatus.populationTrend ===
-                            'decreasing'
-                          ? colors.coral
-                          : colors.sand
-                    }
-                  />
-                  <Text
-                    style={[
-                      styles.trendText,
-                      {
-                        color:
-                          animal.conservationStatus.populationTrend ===
-                          'increasing'
-                            ? colors.leaf
-                            : animal.conservationStatus.populationTrend ===
-                                'decreasing'
-                              ? colors.coral
-                              : colors.sand,
-                      },
-                    ]}
-                  >
-                    {animal.conservationStatus.populationTrend === 'increasing'
-                      ? '种群恢复中'
-                      : animal.conservationStatus.populationTrend ===
-                          'decreasing'
-                        ? '种群下降'
-                        : '种群稳定'}
+                  <Icon name={trendIcon} size={14} color={trendColor} />
+                  <Text style={[styles.trendText, { color: trendColor }]}>
+                    {trendLabel}
                   </Text>
                 </View>
               </View>
               <Text style={styles.endangeredText}>
-                {animal.commonNameZh}是
-                {statusLabels[animal.conservationStatus.iucnStatus] || ''}物种，
-                需要重点保护。
+                {animal.commonNameZh}是{statusLabel}物种，
+                {animal.conservationStatus.iucnStatus === 'EX' ||
+                animal.conservationStatus.iucnStatus === 'EW'
+                  ? '野外已难以维系种群。'
+                  : '需要重点保护。'}
               </Text>
               {animal.conservationStatus.population && (
                 <View style={styles.populationStat}>
@@ -387,7 +346,10 @@ export const AnimalDetailScreen: React.FC = () => {
                     ~{animal.conservationStatus.population.toLocaleString()}
                   </Text>
                   <Text style={styles.populationLabel}>
-                    野生个体（{animal.conservationStatus.assessmentYear}年普查）
+                    野生个体
+                    {animal.conservationStatus.assessmentYear
+                      ? `（${animal.conservationStatus.assessmentYear}年评估）`
+                      : ''}
                   </Text>
                 </View>
               )}

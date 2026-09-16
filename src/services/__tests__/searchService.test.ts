@@ -11,11 +11,28 @@ import {
   getAnimalDetail,
   HOT_SEARCH_TERMS,
 } from '../searchService';
+import { API_TOKEN, setBackendApiEnabled, USE_BACKEND_API_DEFAULT } from '../api';
 
 describe('searchService', () => {
-  // 每个测试前重置搜索历史
+  const originalFetch = globalThis.fetch;
+
+  // 本文件的历史用例断言的是「本地 mock 分支」的行为。
+  // 全局开关 USE_BACKEND_API_DEFAULT 已改为 true，若不显式关掉，
+  // 这些用例会真的去请求 http://10.0.2.2:3000，在测试环境里必然超时挂起。
   beforeEach(() => {
+    // 每个测试前重置搜索历史
     clearSearchHistory();
+    setBackendApiEnabled(false);
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    jest.restoreAllMocks();
+  });
+
+  afterAll(() => {
+    // 不把开关状态泄漏给同文件后续用例
+    setBackendApiEnabled(USE_BACKEND_API_DEFAULT);
   });
 
   describe('searchAnimals', () => {
@@ -177,6 +194,111 @@ describe('searchService', () => {
       const animal = await getAnimalDetail('tiger');
       expect(animal?.conservationStatus).toBeDefined();
       expect(animal?.conservationStatus?.iucnStatus).toBeDefined();
+    });
+  });
+
+  // ── 信封解包回归 ──────────────────────────────────────────────────
+  // 背景：旧实现把整个响应体当成 payload，于是 `data.items` / `data.results`
+  // 恒为 undefined；又因为外层 catch 只 console.warn，失败会静默退回 mock，
+  // 表现为「接口明明通了，搜索结果却永远是假的」。以下用例锁定解包行为。
+  describe('后端 API 模式（信封解包回归）', () => {
+    const jsonResponse = (body: unknown, ok = true, status = 200) => ({
+      ok,
+      status,
+      json: async () => body,
+    });
+
+    const tigerResult = {
+      id: 'Panthera tigris',
+      commonNameZh: '虎',
+      commonNameEn: 'Tiger',
+      scientificName: 'Panthera tigris',
+      family: 'Felidae',
+      familyZh: '猫科',
+    };
+
+    beforeEach(() => {
+      setBackendApiEnabled(true);
+    });
+
+    it('unwraps {success, data} for searchAnimals', async () => {
+      const fetchMock = jest.fn().mockResolvedValue(
+        jsonResponse({
+          success: true,
+          data: { items: [tigerResult], total: 1 },
+        }),
+      );
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const result = await searchAnimals('虎');
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/api/search?'),
+        expect.anything(),
+      );
+      expect(result.results).toHaveLength(1);
+      expect(result.results[0].scientificName).toBe('Panthera tigris');
+      expect(result.total).toBe(1);
+      expect(result.hasMore).toBe(false);
+    });
+
+    it('unwraps {success, data} for getSearchSuggestions', async () => {
+      globalThis.fetch = jest.fn().mockResolvedValue(
+        jsonResponse({ success: true, data: { suggestions: ['虎', '雪豹'] } }),
+      ) as unknown as typeof fetch;
+
+      await expect(getSearchSuggestions('虎')).resolves.toEqual(['虎', '雪豹']);
+    });
+
+    it('unwraps {success, data} for getAnimalDetail', async () => {
+      globalThis.fetch = jest.fn().mockResolvedValue(
+        jsonResponse({
+          success: true,
+          data: { ...tigerResult, conservationStatus: { iucnStatus: 'EN' } },
+        }),
+      ) as unknown as typeof fetch;
+
+      const animal = await getAnimalDetail('Panthera tigris');
+
+      expect(animal?.scientificName).toBe('Panthera tigris');
+      expect(animal?.conservationStatus?.iucnStatus).toBe('EN');
+    });
+
+    it('sends the configured API token as a bearer header', async () => {
+      const fetchMock = jest.fn().mockResolvedValue(
+        jsonResponse({ success: true, data: { items: [], total: 0 } }),
+      );
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      await searchAnimals('虎');
+
+      const init = fetchMock.mock.calls[0][1] as RequestInit;
+      expect((init.headers as Record<string, string>).Authorization).toBe(
+        `Bearer ${API_TOKEN}`,
+      );
+    });
+
+    it('falls back to local data and logs an error when the envelope reports failure', async () => {
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      globalThis.fetch = jest.fn().mockResolvedValue(
+        jsonResponse({ success: false, error: { message: 'boom' } }),
+      ) as unknown as typeof fetch;
+
+      const result = await searchAnimals('熊猫');
+
+      expect(errorSpy).toHaveBeenCalled();
+      expect(result.results.length).toBeGreaterThan(0);
+    });
+
+    it('falls back to local data when the request fails with a non-2xx status', async () => {
+      jest.spyOn(console, 'error').mockImplementation(() => {});
+      globalThis.fetch = jest.fn().mockResolvedValue(
+        jsonResponse({ success: false, error: { message: 'nope' } }, false, 500),
+      ) as unknown as typeof fetch;
+
+      const animal = await getAnimalDetail('tiger');
+
+      expect(animal?.commonNameZh).toBe('虎');
     });
   });
 });

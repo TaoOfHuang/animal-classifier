@@ -9,9 +9,28 @@ import {
   searchTaxonomy,
   buildTaxonomyPath,
 } from '../taxonomyService';
-import { TaxonomyInfo } from '../../types';
+import { setBackendApiEnabled, USE_BACKEND_API_DEFAULT } from '../api';
+import { TaxonomyInfo, TaxonomyNode } from '../../types';
 
 describe('taxonomyService', () => {
+  const originalFetch = globalThis.fetch;
+
+  // 本文件的历史用例断言的是「本地 mock 分支」的行为。
+  // 全局开关 USE_BACKEND_API_DEFAULT 已改为 true，若不显式关掉，
+  // 这些用例会真的去请求 http://10.0.2.2:3000，在测试环境里必然超时挂起。
+  beforeEach(() => {
+    setBackendApiEnabled(false);
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    jest.restoreAllMocks();
+  });
+
+  afterAll(() => {
+    setBackendApiEnabled(USE_BACKEND_API_DEFAULT);
+  });
+
   describe('getParentLevel', () => {
     it('returns parent level for valid levels', () => {
       expect(getParentLevel('phylum')).toBe('kingdom');
@@ -191,6 +210,106 @@ describe('taxonomyService', () => {
       const taxonomy: TaxonomyInfo = {};
       const path = buildTaxonomyPath(taxonomy);
       expect(path).toEqual([]);
+    });
+  });
+
+  // ── 信封解包回归 ──────────────────────────────────────────────────
+  // 背景：旧实现把整个响应体当成 payload，于是 `data.children` /
+  // `data.results` 恒为 undefined；又因为外层 catch 只 console.warn，
+  // 失败会静默退回 mock，表现为「接口明明通了，树却永远是假的」。
+  describe('后端 API 模式（信封解包回归）', () => {
+    const jsonResponse = (body: unknown, ok = true, status = 200) => ({
+      ok,
+      status,
+      json: async () => body,
+    });
+
+    const pantheraNode: TaxonomyNode = {
+      id: 'Panthera',
+      level: 'genus',
+      scientificName: 'Panthera',
+      commonNameZh: '豹属',
+      commonNameEn: 'Panthera',
+      childCount: 5,
+    };
+
+    const felidaeNode: TaxonomyNode = {
+      id: 'Felidae',
+      level: 'family',
+      scientificName: 'Felidae',
+      commonNameZh: '猫科',
+      commonNameEn: 'Felidae',
+      childCount: 14,
+    };
+
+    const carnivoraNode: TaxonomyNode = {
+      id: 'Carnivora',
+      level: 'order',
+      scientificName: 'Carnivora',
+      commonNameZh: '食肉目',
+      commonNameEn: 'Carnivora',
+      childCount: 16,
+    };
+
+    beforeEach(() => {
+      setBackendApiEnabled(true);
+    });
+
+    it('unwraps {success, data} for fetchTaxonomyChildren', async () => {
+      const fetchMock = jest.fn().mockResolvedValue(
+        jsonResponse({
+          success: true,
+          data: { children: [pantheraNode], hasMore: false, total: 1 },
+        }),
+      );
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const result = await fetchTaxonomyChildren('Panthera', 'genus');
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/api/taxonomy/genus/Panthera/children'),
+        expect.anything(),
+      );
+      expect(result.children).toHaveLength(1);
+      expect(result.children[0].scientificName).toBe('Panthera');
+      expect(result.total).toBe(1);
+      expect(result.hasMore).toBe(false);
+    });
+
+    it('unwraps {success, data} for fetchTaxonomyDetail', async () => {
+      globalThis.fetch = jest.fn().mockResolvedValue(
+        jsonResponse({
+          success: true,
+          data: { current: felidaeNode, parent: carnivoraNode, childCount: 14 },
+        }),
+      ) as unknown as typeof fetch;
+
+      const result = await fetchTaxonomyDetail('family', 'Felidae');
+
+      expect(result?.current.scientificName).toBe('Felidae');
+      expect(result?.parent?.scientificName).toBe('Carnivora');
+      expect(result?.childCount).toBe(14);
+    });
+
+    it('unwraps {success, data} for searchTaxonomy', async () => {
+      globalThis.fetch = jest.fn().mockResolvedValue(
+        jsonResponse({ success: true, data: { results: [pantheraNode] } }),
+      ) as unknown as typeof fetch;
+
+      await expect(searchTaxonomy('Panthera')).resolves.toHaveLength(1);
+    });
+
+    it('falls back to local data and logs an error when the envelope is malformed', async () => {
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      // 缺 success 字段：必须被判为非法响应，而不是被当成 payload 直接用
+      globalThis.fetch = jest.fn().mockResolvedValue(
+        jsonResponse({ data: { children: [] } }),
+      ) as unknown as typeof fetch;
+
+      const result = await fetchTaxonomyChildren('felidae', 'family');
+
+      expect(errorSpy).toHaveBeenCalled();
+      expect(result.children.length).toBeGreaterThan(0);
     });
   });
 });
