@@ -3,6 +3,8 @@ import { apiRouter } from './routes';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import { getConservationSource } from './services/conservation';
 import { cacheStats, invalidateCache } from './utils/cache';
+import { getGlobalDailyLimit } from './config';
+import { getGlobalUsage, todayKey } from './services/deviceService';
 
 export const app = express();
 
@@ -20,8 +22,12 @@ app.get('/health', (_req, res) => {
   res.status(200).json({
     status: 'ok',
     conservationSource,
-    // 缓存看板：改了上游数据却看不到效果时，用它确认是缓存而非逻辑问题
-    cache: { size: cacheStats().size },
+    // 缓存看板：改了上游数据却看不到效果时，用它确认是缓存而非逻辑问题；
+    // stale = 已过期但仍被保留的条目（上游抖动时由它们兜底）
+    cache: { size: cacheStats().size, stale: cacheStats().stale },
+    // 配额看板：limit = 0 表示不限；used 为当日非白名单设备的累计调用数。
+    // 想知道「我的 AI 额度今天被吃掉多少」时看这里。
+    quota: { date: todayKey(), used: getGlobalUsage(), limit: getGlobalDailyLimit() },
   });
 });
 

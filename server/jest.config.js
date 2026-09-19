@@ -4,4 +4,6 @@ module.exports = {
   roots: ['<rootDir>/src'],
   // 只把 *.test.ts 当测试，`__tests__/helpers/` 里的共享替身不会被误当成空套件。
   testMatch: ['**/__tests__/**/*.test.ts'],
+  // 强制测试使用内存库（:memory:），不落盘
+  setupFiles: ['<rootDir>/jest.setup.js'],
 };

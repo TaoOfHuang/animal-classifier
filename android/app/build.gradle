@@ -103,7 +103,9 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
-        manifestPlaceholders = [usesCleartextTraffic: true]
+        // usesCleartextTraffic 不在这里设置，改由下方 buildTypes 按环境分别指定：
+        // debug 放行明文 HTTP（要连开发机的 http://10.0.2.2:3000），
+        // release 禁止明文，强制走 HTTPS。
     }
     signingConfigs {
         debug {
@@ -124,6 +126,8 @@ android {
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
+            // 开发期要访问 http://10.0.2.2:3000（模拟器 → 宿主机），必须放行明文。
+            manifestPlaceholders = [usesCleartextTraffic: true]
         }
         release {
             // 未配置正式签名时会回退到 debug 签名（仅便于本地测性能），
@@ -131,6 +135,10 @@ android {
             signingConfig hasReleaseSigning ? signingConfigs.release : signingConfigs.debug
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
+            // 正式包禁止明文 HTTP：服务器必须是 HTTPS 地址。
+            // 作用：① 避免 Bearer Token 在链路上明文传输；② 满足应用市场的审核要求。
+            // 注意：release 包将无法访问任何 http:// 接口，本地调试请用 debug 构建。
+            manifestPlaceholders = [usesCleartextTraffic: false]
         }
     }
 }

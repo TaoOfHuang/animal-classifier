@@ -206,7 +206,8 @@ describe('taxonomyService / ITIS', () => {
         const error = await pending;
 
         // 超时属于可重试错误：既然约定重试 1 次，就该发两次请求
-        expect((error as Error).message).toMatch(/Request timed out after 5000ms/);
+        // 15000ms 与 ITIS_REQUEST.timeoutMs 绑定（ITIS 前缀检索实测最坏 9.4s，5s 必然踩雷）
+        expect((error as Error).message).toMatch(/Request timed out after 15000ms/);
         expect(fetchMock).toHaveBeenCalledTimes(2);
       } finally {
         jest.useRealTimers();

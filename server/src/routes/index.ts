@@ -1,11 +1,13 @@
 import { Router } from 'express';
 import { animalRouter } from './animal';
+import { authRouter } from './auth';
 import { recognizeRouter } from './recognize';
 import { searchRouter } from './search';
 import { taxonomyRouter } from './taxonomy';
 
 export const apiRouter = Router();
 
+apiRouter.use(authRouter);
 apiRouter.use(animalRouter);
 apiRouter.use(recognizeRouter);
 apiRouter.use(searchRouter);

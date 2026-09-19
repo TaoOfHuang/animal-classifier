@@ -559,7 +559,7 @@ Content-Type: application/json
 
 Request:
 - image: string (图片 base64 data URL 或本地 uri)
-- 需要 Authorization: Bearer <API_TOKEN>
+- 需要 Authorization: Bearer <设备令牌>（客户端首次启动时调 POST /api/auth/device 换取）
 
 Response:
 {
@@ -726,6 +726,25 @@ Response:
 > 走 ITIS `getHierarchyDownFromTSN`（只返回直接下级，正好对应懒加载语义），
 > 分页在内存里 `slice`；`childLevel` 供前端校验层级连续性。
 > `limit` 默认 20、上限 100。
+>
+> **上游抖动不再直接 502**：`withCache` 会保留已过期的条目，loader 失败时返回旧值并打
+> `[cache] <key> upstream failed (…); serving stale value expired Ns ago` 日志
+> （旧值最多陈旧 7 天；`/health` 的 `cache.stale` 显示当前兜底条目数）。
+> 只有**本进程从未成功查过**该 key（例如刚重启就是冷缓存）时才会 502 `TAXONOMY_UPSTREAM_FAILED`，
+> 前端随即退回本地 mock 数据。
+>
+> **ITIS 请求超时单独放宽到 15s**（`ITIS_REQUEST.timeoutMs`，2026-09-18 调整）。
+> 通用的 `DEFAULT_TIMEOUT_MS = 5000` 对本接口远远不够：`searchByScientificName` 是**前缀匹配**，
+> 属名/科名单词（如 `Felis`）会命中约 80KB 报文、实测 1.7~9.4s；而二名法（`Felis catus`）只有
+> 0.7KB / 1.7s —— 同一接口差 100 倍。5s 超时下冷启动会精确耗掉
+> `5s + 300ms 退避 + 5s ≈ 10.3s` 才返回 502。
+>
+> ⚠️ 因为 `ITIS_REQUEST.retries: 1` 与超时**叠加**，最坏情况单次 ITIS 调用要 **30.3s** 才放弃
+> （链路上最多 3 次调用，故最坏等待更久）。若要压低最坏等待，把 `retries` 降为 `0` 即可。
+>
+> 另注：一次 `children` 请求**串行**打 3 次 ITIS
+> （`resolveTaxon` 的 `search` + `getFullHierarchyFromTSN`，再加 `getHierarchyDownFromTSN`），
+> 复刻实测合计 9.5s —— 这是"响应慢"的主要来源，不是单次调用慢。
 
 ### 搜索分类
 

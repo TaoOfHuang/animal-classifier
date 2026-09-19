@@ -65,7 +65,7 @@ rsync -avz \
 
 # 4. 在服务器上配置 .env 文件
 cp .env.example .env
-nano .env   # 编辑 API_TOKEN、AI_BASE_URL 等
+nano .env   # 编辑 ADMIN_TOKEN、AI_BASE_URL 等
 ```
 
 ### 启动服务
@@ -257,9 +257,17 @@ sudo systemctl reload nginx
 # 端口
 PORT=3000
 
-# API Token（保护 /api/recognize 接口）
-# 生成随机 token: openssl rand -hex 32
-API_TOKEN=your-random-token-here
+# ── 设备令牌鉴权 ──────────────────────────────────────────────────
+# 已取代原先的共享 API_TOKEN。客户端首次启动会调 POST /api/auth/device
+# 用 deviceId 换取设备令牌，**服务端无需预置任何客户端密钥**。
+# 设计见 docs/plans/2026-09-18-device-token-auth.md
+
+# SQLite 数据库文件路径（Docker 部署时务必挂载卷，否则重启后设备与用量全丢）
+DB_PATH=./data/app.sqlite
+
+# 管理员令牌：仅用于 POST /api/auth/revoke 封禁设备
+# 生成随机 token: openssl rand -hex 32。留空则该端点返回 503，不会裸奔。
+ADMIN_TOKEN=your-random-admin-token-here
 
 # AI 提供商配置
 AI_PROVIDER=ollama
@@ -267,8 +275,17 @@ AI_BASE_URL=http://192.168.5.8:1234
 AI_API_KEY=
 AI_MODEL=qwen/qwen3.6-35b-a3b
 
-# 每日调用限制（0 = 不限制）
-AI_RECOGNIZE_DAILY_LIMIT=100
+# ── 三层限额（0 = 不限制）─────────────────────────────────────────
+# ① 单设备每日上限 —— 公平分配，一台设备刷不爆别人
+DEVICE_DAILY_LIMIT=20
+# ② 全局每日上限 —— 财务保险丝，所有非白名单设备共享。
+#    这是唯一不依赖客户端可信度的机制，也是本方案真正的安全边界。
+GLOBAL_DAILY_LIMIT=500
+# ③ 注册节流与设备总量 —— 抬高「变出新身份」的成本
+REGISTER_RATE_LIMIT_PER_HOUR=3
+MAX_DEVICE_COUNT=2000
+# 管理员设备白名单（不参与全局配额），多个 deviceId 逗号分隔
+WHITELIST_DEVICE_IDS=
 
 # 濒危信息数据源：static（本地离线数据集，默认）| iucn_v4（在线 v4 API，需下方 token）
 # 默认 static 的原因见 docs/plans/2026-09-13-itis-iucn-integration.md「前置决策 1」（IUCN ToU 限制）
@@ -290,12 +307,16 @@ PEXELS_API_KEY=
 > 分类信息（ITIS）与濒危信息（IUCN）的接口契约实测记录见
 > `server/src/services/conservation/README.md`。
 
-### 前端 `src/services/api.ts`
+### 前端令牌获取
 
-```typescript
-// 填入与服务端 .env 中相同的 API_TOKEN
-export const API_TOKEN = 'your-random-token-here';
-```
+客户端**不再需要填写任何密钥**。`src/services/deviceAuth.ts` 会在首次请求时自动：
+
+1. 读取系统级设备标识（Android 8+ 为 `ANDROID_ID`，清应用数据 / 卸载重装均不变）
+2. 调 `POST /api/auth/device` 换取设备令牌
+3. 存入 AsyncStorage，后续请求自动携带
+
+服务端把配额与封禁都挂在 deviceId 上，因此**清掉本地令牌后重新注册不会重置当日用量**，
+被封禁的设备重新注册也会被拒绝。
 
 > ⚠️ **安全提醒**：`.env` 文件永远不要提交到 Git！`.env.example` 是安全的模板。
 
@@ -303,11 +324,33 @@ export const API_TOKEN = 'your-random-token-here';
 
 ## 常见问题
 
-### Q: 如何生成安全的 API Token？
+### Q: 如何生成安全的 ADMIN_TOKEN？
 
 ```bash
 openssl rand -hex 32
 # 输出示例: a1b2c3d4e5f6...
+```
+
+该令牌**只**用于封禁设备，与客户端无关。客户端不需要任何预置密钥——
+设备令牌由客户端启动时向服务端注册换取。
+
+### Q: 如何封禁一台乱刷的设备？
+
+```bash
+curl -X POST https://你的域名/api/auth/revoke \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"deviceId":"<16~64 位十六进制>"}'
+```
+
+deviceId 可从服务端日志中看到（查找 `+ registered new device <deviceId>`）。
+被封禁的设备再调用接口会收到 403 `DEVICE_REVOKED`，且**重新注册也会被拒绝**。
+
+### Q: 今天配额被吃掉多少？
+
+```bash
+curl https://你的域名/health
+# → { "status": "ok", ..., "quota": { "date": "2026-09-18", "used": 137, "limit": 500 } }
 ```
 
 ### Q: 服务器内存不足怎么办？

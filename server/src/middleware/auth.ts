@@ -1,84 +1,121 @@
+// 设备令牌鉴权中间件。
+//
+// 取代了原来的「全局共享 token 全等比较 + 全局内存计数」实现。
+// 状态码语义见 docs/plans/2026-09-18-device-token-auth.md 第五节：
+//
+//   401 UNAUTHORIZED           凭证无效     → 客户端可重新注册后自愈
+//   403 DEVICE_REVOKED         设备已封禁   → 客户端必须停止重试
+//   429 DEVICE_QUOTA_EXCEEDED  单设备配额用尽 → 不可重试，更不可重新注册
+//   429 GLOBAL_QUOTA_EXCEEDED  全局配额用尽   → 同上
+//
+// 区分这四者是为了让客户端能做出正确反应：**只有 401 允许触发重新注册**，
+// 否则「换身份重置配额」就成了官方支持的绕过路径。
+
 import { Request, Response, NextFunction } from 'express';
 import { ApiErrorBody } from '../types/api';
+import { authenticateAndConsume } from '../services/deviceService';
 import { logger } from '../utils/logger';
 
-// ── In-memory daily call counter ────────────────────────────────────
-// Key: "YYYY-MM-DD", Value: number of calls made today
-const dailyCalls: Record<string, number> = {};
-
-const DEFAULT_DAILY_LIMIT_NUM = 100;
-
-const getTodayKey = (): string => new Date().toISOString().slice(0, 10);
-
-const getDailyCalls = (): number => dailyCalls[getTodayKey()] || 0;
-
-const incrementDailyCalls = (): void => {
-  dailyCalls[getTodayKey()] = (dailyCalls[getTodayKey()] || 0) + 1;
+type RequestWithQuota = Request & {
+  dailyCallsRemaining?: number;
+  deviceId?: string;
 };
 
-// ── Public exports ──────────────────────────────────────────────────
-const authMiddleware = (
+const extractToken = (req: Request): string => {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    return authHeader.slice(7).trim();
+  }
+
+  const legacyHeader = req.headers['x-api-token'];
+  if (typeof legacyHeader === 'string') {
+    return legacyHeader.trim();
+  }
+
+  return '';
+};
+
+const reject = (
+  res: Response<ApiErrorBody>,
+  status: number,
+  code: string,
+  message: string,
+  retryAfterSeconds?: number,
+): void => {
+  if (retryAfterSeconds !== undefined) {
+    res.set('Retry-After', String(retryAfterSeconds));
+  }
+  res.status(status).json({ success: false, error: { code, message } });
+};
+
+export const authMiddleware = (
   req: Request,
   res: Response<ApiErrorBody>,
   next: NextFunction,
 ): void => {
-  // Read env vars at request time so tests can override them
-  const API_TOKEN = process.env.API_TOKEN;
-  const DAILY_LIMIT = Number(process.env.AI_RECOGNIZE_DAILY_LIMIT) || DEFAULT_DAILY_LIMIT_NUM;
+  const outcome = authenticateAndConsume(extractToken(req));
 
-  // If no API_TOKEN is configured, skip auth (development / no-token mode)
-  if (!API_TOKEN) {
-    return next();
+  switch (outcome.kind) {
+    case 'ok': {
+      const withQuota = req as RequestWithQuota;
+      withQuota.dailyCallsRemaining = outcome.remaining;
+      withQuota.deviceId = outcome.device.deviceId;
+      next();
+      return;
+    }
+
+    case 'unauthorized':
+      logger.warn(
+        'auth',
+        `✗ 401 invalid token ${req.method} ${req.path} from ${req.ip}`,
+      );
+      reject(
+        res,
+        401,
+        'UNAUTHORIZED',
+        'Missing or invalid device token. Register via POST /api/auth/device first.',
+      );
+      return;
+
+    case 'revoked':
+      logger.warn(
+        'auth',
+        `✗ 403 revoked device tried ${req.method} ${req.path} from ${req.ip}`,
+      );
+      reject(
+        res,
+        403,
+        'DEVICE_REVOKED',
+        'This device has been revoked and can no longer use the service.',
+      );
+      return;
+
+    case 'device_quota_exceeded':
+      logger.warn(
+        'auth',
+        `✗ 429 device quota exhausted ${req.method} ${req.path} from ${req.ip}`,
+      );
+      reject(
+        res,
+        429,
+        'DEVICE_QUOTA_EXCEEDED',
+        'Daily recognition limit reached for this device. Please try again tomorrow.',
+        outcome.retryAfterSeconds,
+      );
+      return;
+
+    case 'global_quota_exceeded':
+      logger.warn(
+        'auth',
+        `✗ 429 global quota exhausted ${req.method} ${req.path} from ${req.ip}`,
+      );
+      reject(
+        res,
+        429,
+        'GLOBAL_QUOTA_EXCEEDED',
+        'Service daily capacity reached. Please try again tomorrow.',
+        outcome.retryAfterSeconds,
+      );
+      return;
   }
-
-  // Token extraction
-  const authHeader = req.headers.authorization;
-  let token: string | null = null;
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    token = authHeader.slice(7);
-  } else {
-    token = req.headers['x-api-token'] as string | null;
-  }
-
-  if (!token || token !== API_TOKEN) {
-    logger.warn('auth', `✗ 401 rejected ${req.method} ${req.path} from ${req.ip}`);
-    res.status(401).json({
-      success: false,
-      error: {
-        code: 'UNAUTHORIZED',
-        message: 'Missing or invalid API token.',
-      },
-    });
-    return;
-  }
-
-  // ── Daily rate limit ──────────────────────────────────────────────
-  const count = getDailyCalls();
-  if (count >= DAILY_LIMIT) {
-    logger.warn('auth', `✗ 429 rate limit hit (${count}/${DAILY_LIMIT}) ${req.method} ${req.path}`);
-    res.status(429).json({
-      success: false,
-      error: {
-        code: 'RATE_LIMIT_EXCEEDED',
-        message: `Daily recognition limit reached (${DAILY_LIMIT} calls). Please try again tomorrow.`,
-      },
-    });
-    return;
-  }
-
-  // Record this call
-  incrementDailyCalls();
-
-  // Attach call info for downstream logging if needed
-  (req as Request & { dailyCallsRemaining?: number }).dailyCallsRemaining =
-    DAILY_LIMIT - count - 1;
-
-  next();
 };
-
-// ── Exposed for testing ─────────────────────────────────────────────
-const resetDailyCounter = (): void => {
-  Object.keys(dailyCalls).forEach((k) => delete dailyCalls[k]);
-};
-
-export { authMiddleware, getDailyCalls, getTodayKey, resetDailyCounter, DEFAULT_DAILY_LIMIT_NUM };

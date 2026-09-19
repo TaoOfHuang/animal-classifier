@@ -15,7 +15,13 @@ const ITIS_BASE = 'https://www.itis.gov/ITISWebService/jsonservice';
 
 // ITIS 是 SOAP 派生的老端点，实测响应为 ISO-8859-1 且响应头如实声明；
 // 用 UTF-8 解码含重音字符的报文会抛错，必须显式指定 latin1。
-const ITIS_REQUEST = { charset: 'latin1', retries: 1 } as const;
+//
+// timeoutMs 必须显式给足：externalApiService 的默认 5000ms 对本接口远远不够。
+// `searchByScientificName` 是**前缀匹配**，属名/科名单词（如 `Felis`）会命中 80KB 报文、
+// 实测 4~10s（最坏 9.44s）；5s 超时下冷启动必然 502 —— 精确表现为
+// 5s + 300ms 退避 + 5s = 10.3s 才失败。15s 覆盖实测最坏值并留约 1.6 倍余量。
+// 注意：retries: 1 与超时叠加，最坏情况单次上游调用要 30.3s 才放弃（见 DEVELOPMENT.md）。
+const ITIS_REQUEST = { charset: 'latin1', retries: 1, timeoutMs: 15000 } as const;
 
 /** ITIS rankName → 七级枚举。其余（Subkingdom / Superclass / Subfamily …）全部丢弃 */
 export const RANK_TO_LEVEL: Record<string, TaxonomyLevel> = {

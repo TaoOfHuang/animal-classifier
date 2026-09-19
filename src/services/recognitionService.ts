@@ -1,5 +1,5 @@
 import { Animal, RecognitionResult } from '../types';
-import { API_BASE_URL, API_TOKEN } from './api';
+import { requestJson } from './api';
 import { prepareImageForRecognition } from '../utils/image';
 
 const USE_BACKEND_API = true;
@@ -55,6 +55,9 @@ type RecognitionApiResponse = {
   };
 };
 
+/** requestJson 已经解包了信封，这里取 data 的形状 */
+type RecognitionPayload = NonNullable<RecognitionApiResponse['data']>;
+
 export const recognizeAnimal = async (
   imageUri: string,
   imageData?: RecognitionImageData,
@@ -68,39 +71,26 @@ export const recognizeAnimal = async (
     return mockRecognize(prepared.uri);
   }
 
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-
-  // Send API token when configured
-  if (API_TOKEN) {
-    headers['Authorization'] = `Bearer ${API_TOKEN}`;
-  }
-
-  const response = await fetch(`${API_BASE_URL}/api/recognize`, {
+  // 令牌由 api 层统一注入（设备令牌，见 ./deviceAuth）。
+  // 401 会由 api 层自动重新注册后重试一次；403/429 直接抛出——配额用尽时
+  // 重新注册会重置配额，那是不允许的。
+  const data = await requestJson<RecognitionPayload>('/api/recognize', {
     method: 'POST',
-    headers,
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ image }),
   });
 
-  if (!response.ok) {
-    const errorBody = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-    const errorMessage = (errorBody as any)?.error?.message || `Recognition request failed with status ${response.status}`;
-    throw new Error(errorMessage);
-  }
-
-  const payload = (await response.json()) as RecognitionApiResponse;
-  if (!payload?.success || !payload?.data) {
-    throw new Error(payload.error?.message || 'Invalid recognition response');
+  if (!data?.animal) {
+    throw new Error('Invalid recognition response');
   }
 
   return {
-    ...payload.data,
+    ...data,
     animal: {
-      ...payload.data.animal,
-      taxonomy: payload.data.animal.taxonomy || {},
-      images: payload.data.animal.images || [prepared.uri],
+      ...data.animal,
+      taxonomy: data.animal.taxonomy || {},
+      images: data.animal.images || [prepared.uri],
     },
-    timestamp: payload.data.timestamp || Date.now(),
+    timestamp: data.timestamp || Date.now(),
   } as RecognitionResult;
 };

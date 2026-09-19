@@ -160,4 +160,39 @@ describe('taxonomy routes', () => {
     expect(res.status).toBe(200);
     expect(res.body.data.results).toEqual([]);
   });
+
+  /**
+   * 与上一条 502 用例构成一对：**没有历史数据**时上游抖动仍是 502（前端只能退回
+   * mock），但只要本进程曾经成功查过，就该拿旧值兜住，而不是让懒加载整支降级。
+   * 对应前端那条 `[api] fetchTaxonomyChildren failed … Taxonomy service unavailable`。
+   */
+  it('serves the last good data when itis fails after the ttl expired', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const first = await request(app).get(
+      '/api/taxonomy/genus/Panthera/children?limit=5&offset=0',
+    );
+    expect(first.status).toBe(200);
+
+    // 跳过 ITIS 的 24h TTL：模拟「缓存已过期，上游刚好抖动」
+    const realNow = Date.now;
+    jest.spyOn(Date, 'now').mockReturnValue(realNow() + 25 * 60 * 60 * 1000);
+    installFetchMock(
+      createFetchMock({
+        routes: {
+          itis: () => mockJsonResponse({}, { ok: false, status: 503 }),
+        },
+      }),
+    );
+
+    const second = await request(app).get(
+      '/api/taxonomy/genus/Panthera/children?limit=5&offset=0',
+    );
+
+    expect(second.status).toBe(200);
+    expect(second.body.data).toEqual(first.body.data);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('serving stale value expired'),
+    );
+  });
 });

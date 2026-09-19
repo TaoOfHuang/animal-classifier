@@ -74,3 +74,27 @@ jest.mock('@react-navigation/native-stack', () => {
     }),
   };
 });
+
+// Mock 设备鉴权层：测试统一使用固定令牌，避免每个用例都去走真实的注册网络请求。
+// deviceAuth 自身的逻辑由 src/services/__tests__/deviceAuth.test.ts 单独覆盖。
+jest.mock('./src/services/deviceAuth', () => {
+  class DeviceAuthError extends Error {
+    constructor(message, status, code) {
+      super(message);
+      this.name = 'DeviceAuthError';
+      this.status = status;
+      this.code = code;
+    }
+  }
+
+  return {
+    DeviceAuthError,
+    clearDeviceToken: jest.fn(() => Promise.resolve()),
+    getDeviceToken: jest.fn(() => Promise.resolve('test-device-token')),
+    registerDevice: jest.fn(() => Promise.resolve('test-device-token')),
+    resolveDeviceId: jest.fn(() => Promise.resolve('a1b2c3d4e5f60718')),
+    describeDeviceIdSource: jest.fn(() =>
+      Promise.resolve({ deviceId: 'a1b2c3d4e5f60718', stable: true }),
+    ),
+  };
+});

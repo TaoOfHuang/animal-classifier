@@ -11,8 +11,10 @@
 
 后端提供的关键端点：
 
-- `GET /health` — 健康检查，用于验证服务是否存活
-- `POST /api/recognize` — 图片识别接口（需要 `API_TOKEN`）
+- `GET /health` — 健康检查，验证服务是否存活，并返回当日配额消耗
+- `POST /api/auth/device` — 设备注册，用 deviceId 换取设备令牌（公开）
+- `POST /api/recognize` — 图片识别接口（需要设备令牌，见第九节）
+- `POST /api/auth/revoke` — 封禁设备（需要 `ADMIN_TOKEN`）
 
 ---
 
@@ -197,9 +199,15 @@ Certbot 会自动改写 Nginx 配置并重载。证书到期前会自动续期�
 ```bash
 PORT=3000
 
-# 接口鉴权 Token —— 保护 /api/recognize
-# 生成方式：openssl rand -hex 32
-API_TOKEN=你的随机token
+# 设备令牌鉴权 —— 已取代原先的共享 API_TOKEN
+# 客户端首次启动会调 POST /api/auth/device 换取设备令牌，服务端无需预置客户端密钥。
+# 设计见 docs/plans/2026-09-18-device-token-auth.md
+# SQLite 数据库文件路径（务必纳入备份；Docker 部署需挂载卷，否则重启丢数据）
+DB_PATH=./data/app.sqlite
+
+# 管理员令牌：仅用于 POST /api/auth/revoke 封禁设备
+# 生成方式：openssl rand -hex 32。留空则该端点返回 503，不会裸奔。
+ADMIN_TOKEN=你的随机管理员token
 
 # AI 提供商：openai | ollama | openrouter | custom
 AI_PROVIDER=ollama
@@ -213,8 +221,17 @@ AI_API_KEY=
 # 模型名称
 AI_MODEL=qwen/qwen3.6-35b-a3b
 
-# 每日识别次数上限（0 = 不限制）
-AI_RECOGNIZE_DAILY_LIMIT=100
+# ── 三层限额（0 = 不限制）────────────────────────────────────────
+# ① 单设备每日上限 —— 公平分配，一台设备刷不爆别人
+DEVICE_DAILY_LIMIT=20
+# ② 全局每日上限 —— 财务保险丝，所有非白名单设备共享。
+#    这是唯一不依赖客户端可信度的机制，也是本方案真正的安全边界。
+GLOBAL_DAILY_LIMIT=500
+# ③ 注册节流与设备总量 —— 抬高「变出新身份」的成本
+REGISTER_RATE_LIMIT_PER_HOUR=3
+MAX_DEVICE_COUNT=2000
+# 管理员设备白名单（不参与全局配额），多个 deviceId 逗号分隔
+WHITELIST_DEVICE_IDS=
 
 # 第三方 API（可选）
 IUCN_API_TOKEN=
@@ -234,30 +251,51 @@ PEXELS_API_KEY=
 ### 安全提醒
 
 - `.env` 含密钥，**绝不要提交到 Git**（已在 `.gitignore` 中）
-- `API_TOKEN` 要与 App 端 `src/services/api.ts` 中的 `API_TOKEN` **保持一致**，否则接口会返回 401
+- 客户端**不再需要任何预置密钥**：设备令牌由 App 启动时向 `POST /api/auth/device` 注册换取
+- `ADMIN_TOKEN` 只用于封禁设备，**不要**写进客户端
+- `data/app.sqlite` 里存的是设备与用量，**需纳入备份**（不含令牌明文，只存 sha256）
 
 ---
 
 ## 九、让 Android App 连上服务器
 
-App 的接口地址在 `src/services/api.ts`：
+App 的接口地址在 `src/services/apiConfig.ts`，已按构建环境自动分流：
 
 ```typescript
-export const API_BASE_URL = 'http://10.0.2.2:3000';
-export const API_TOKEN = 'animal-classifier-xyz-123';
+const DEV_API_BASE_URL  = 'http://10.0.2.2:3000';      // debug 构建
+const PROD_API_BASE_URL = 'https://api.example.com';   // release 构建 ← 部署后必须替换
+
+export const API_BASE_URL = __DEV__ ? DEV_API_BASE_URL : PROD_API_BASE_URL;
 ```
 
-需要根据运行环境修改 `API_BASE_URL`：
+**部署完 server 后，客户端只需要改这一件事**：把 `PROD_API_BASE_URL` 换成你的真实 HTTPS 域名。
 
-| 运行环境 | `API_BASE_URL` 应填 |
-|---------|---------------------|
-| Android 模拟器访问**本机**后端 | `http://10.0.2.2:3000`（`10.0.2.2` 是模拟器访问宿主机 localhost 的固定地址） |
-| 真机访问**本机**后端 | `http://本机局域网IP:3000`（如 `http://192.168.1.10:3000`） |
-| 真机访问**线上**后端 | `http://服务器公网IP:3000` 或 `https://your-domain.com` |
+**鉴权不用配了**：客户端不再有写死的 `API_TOKEN`。首次启动时 `src/services/deviceAuth.ts`
+会自动用系统设备标识（Android 8+ 的 `ANDROID_ID`）调 `POST /api/auth/device` 换取设备令牌，
+之后每次请求自动携带。设备令牌可被单独撤销、按设备限额——这是共享密钥做不到的。
 
-> 注意：Android 默认禁止明文 HTTP。本项目在 `android/app/build.gradle` 中通过
-> `manifestPlaceholders = [usesCleartextTraffic: true]` 放开了限制，所以能用 HTTP。
-> 正式发布建议改为 HTTPS 域名并关闭该开关，否则部分应用市场会审核不通过。
+| 运行环境 | 实际生效的地址 | 说明 |
+|---------|---------------|------|
+| debug 构建 + 模拟器 | `http://10.0.2.2:3000` | `10.0.2.2` 是模拟器访问**宿主机 localhost** 的固定地址 |
+| debug 构建 + 真机 | `http://10.0.2.2:3000`（不通） | 真机会把它解析成手机自己的 localhost。用 `adb reverse tcp:3000 tcp:3000` 可解决 |
+| release 构建 | `PROD_API_BASE_URL` | 运行期无法修改，地址已内联进 `index.android.bundle`，换域名必须重新打包 |
+
+> **为什么不能「手动改一行再打包」**：`API_BASE_URL` 是编译期字面量，Metro 打包时会直接内联。
+> `__DEV__` 在 release bundle 中恒为 `false`，会被静态求值——所以正式包永远落到 `PROD_API_BASE_URL`，
+> 不会再出现「把 `10.0.2.2` 打进正式包」的事故。
+
+### 明文 HTTP 与 HTTPS
+
+`android/app/build.gradle` 里按变体分别控制 `usesCleartextTraffic`：
+
+| 变体 | 值 | 原因 |
+|------|-----|------|
+| `debug` | `true` | 要访问开发机的 `http://10.0.2.2:3000` |
+| `debugOptimized` | `true` | 继承 debug（AGP `initWith`），无需单独配置 |
+| `release` | `false` | **强制 HTTPS**：避免 Bearer Token 明文传输，同时满足应用市场审核要求 |
+
+因此线上后端**必须**启用 HTTPS。`PROD_API_BASE_URL` 不能填 `http://` 地址，
+否则 release 包的所有请求会被系统直接拦截（表现为全部接口失败，但不弹任何提示）。
 
 ---
 
@@ -313,7 +351,11 @@ docker compose up -d --build
 | 部署脚本停在 `npm run build` 报找不到 `tsc` | 用了 `npm ci --omit=dev`，需先装全量依赖再构建 |
 | 部署脚本报 `cd: /home//animal-classifier-server: No such file` | 脚本在远程 heredoc 里引用了未展开的变量，已修复为使用 `$HOME` |
 | 服务器内存不足 / 构建被 OOM kill | 低配机器构建吃力：本地构建好 `dist/` 再上传，或加 swap |
-| App 请求全部失败但 `/health` 正常 | `API_BASE_URL` 配错，或 `API_TOKEN` 与服务端不一致（返回 401） |
+| App 请求全部失败但 `/health` 正常 | ① `PROD_API_BASE_URL` 还是占位符 `api.example.com`；② release 包配了 `http://` 地址 → 被 `usesCleartextTraffic=false` 拦截；③ 设备注册被注册节流拦下（429 `REGISTER_RATE_LIMITED`） |
+| App 返回 403 `DEVICE_REVOKED` | 该设备已被封禁（`POST /api/auth/revoke`），需解除或换设备 |
+| App 返回 429 `DEVICE_QUOTA_EXCEEDED` | 该设备当日额度用完，次日重置。**不要靠清应用数据重注册来绕过**——服务端按 deviceId 记账，重新注册不会重置用量 |
+| App 返回 429 `GLOBAL_QUOTA_EXCEEDED` | 全局额度耗尽（可能有人在刷）。`curl /health` 看 `quota.used`，必要时调高 `GLOBAL_DAILY_LIMIT` 或封禁可疑设备 |
+| 重启服务后配额归零 | `DB_PATH` 指向了非持久化路径。Docker 部署需把卷挂载到 `data/` |
 | 识别接口报 AI 相关错误 | `AI_BASE_URL` 还是内网地址，服务器访问不到，见第八节 |
 | `docker compose up` 报端口占用 | 3000 已被 PM2 占用，先 `pm2 delete animal-api` 或改用其他端口 |
 
@@ -326,7 +368,9 @@ docker compose up -d --build
 - [ ] 服务器安全组已放行对应端口
 - [ ] 本地已配置 SSH 免密登录
 - [ ] 服务器上 `.env` 已创建且内容正确
-- [ ] `API_TOKEN` 与 App 端 `src/services/api.ts` 一致
+- [ ] `ADMIN_TOKEN` 已生成（`openssl rand -hex 32`），且**没有**写进客户端
+- [ ] `DB_PATH` 指向持久化目录（Docker 部署已挂载卷，否则重启后设备与用量丢失）
+- [ ] `GLOBAL_DAILY_LIMIT` 已按自己的 AI 成本设定
 - [ ] `AI_BASE_URL` 是服务器可访问的地址（**不是内网 IP**）
 - [ ] `pm2 status` 显示 `online` 或 `docker compose ps` 显示 `Up`
 - [ ] `curl http://服务器IP:3000/health` 返回 `{"status":"ok"}`

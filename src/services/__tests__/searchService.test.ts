@@ -11,7 +11,7 @@ import {
   getAnimalDetail,
   HOT_SEARCH_TERMS,
 } from '../searchService';
-import { API_TOKEN, setBackendApiEnabled, USE_BACKEND_API_DEFAULT } from '../api';
+import { setBackendApiEnabled, USE_BACKEND_API_DEFAULT } from '../api';
 
 describe('searchService', () => {
   const originalFetch = globalThis.fetch;
@@ -264,7 +264,7 @@ describe('searchService', () => {
       expect(animal?.conservationStatus?.iucnStatus).toBe('EN');
     });
 
-    it('sends the configured API token as a bearer header', async () => {
+    it('sends the device token as a bearer header', async () => {
       const fetchMock = jest.fn().mockResolvedValue(
         jsonResponse({ success: true, data: { items: [], total: 0 } }),
       );
@@ -273,8 +273,9 @@ describe('searchService', () => {
       await searchAnimals('虎');
 
       const init = fetchMock.mock.calls[0][1] as RequestInit;
+      // 令牌来自 deviceAuth（测试环境已在 jest.setup.js 中 mock 为固定值）
       expect((init.headers as Record<string, string>).Authorization).toBe(
-        `Bearer ${API_TOKEN}`,
+        'Bearer test-device-token',
       );
     });
 

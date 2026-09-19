@@ -9,9 +9,16 @@ services:
       - .env
     environment:
       - PORT=3000
+      # 容器内路径（WORKDIR=/app），覆盖 .env 里的相对路径 ./data/app.sqlite
+      - DB_PATH=/app/data/app.sqlite
+    # SQLite 数据必须持久化，否则重建容器后设备与当日用量全部丢失。
+    # 这里用 named volume 而不是 bind mount：Docker 会继承镜像中 /app/data 的属主，
+    # 非 root 的 appuser 才有写权限；bind mount 会沿用宿主目录属主，容易权限不足。
+    volumes:
+      - animal-data:/app/data
     # If you need to override specific env vars here:
     # environment:
-    #   API_TOKEN: "your-token"
+    #   ADMIN_TOKEN: "your-admin-token"
     #   AI_BASE_URL: "http://192.168.5.8:1234"
     networks:
       - animal-network
@@ -19,3 +26,6 @@ services:
 networks:
   animal-network:
     driver: bridge
+
+volumes:
+  animal-data:

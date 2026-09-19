@@ -85,7 +85,7 @@ main() {
   if [ ! -f .env ]; then
     log_warn ".env 文件不存在，从 .env.example 创建..."
     cp .env.example .env
-    log_warn "请编辑 .env 文件，设置 API_TOKEN 等敏感信息！"
+    log_warn "请编辑 .env 文件，设置 ADMIN_TOKEN 等敏感信息！"
   fi
 
   # 6. 用 PM2 启动

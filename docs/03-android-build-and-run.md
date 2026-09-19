@@ -242,15 +242,28 @@ cd android && ./gradlew :app:signingReport --console=plain
 | 构建架构 | 仅 `arm64-v8a` | `android/gradle.properties` |
 | Hermes | 开启 | 同上 |
 | 新架构 | 开启 | 同上 |
-| 明文 HTTP | 允许（`usesCleartextTraffic: true`） | `android/app/build.gradle` |
-| 后端地址 | `http://10.0.2.2:3000` | `src/services/api.ts` |
+| 明文 HTTP | debug / debugOptimized 放行，release 禁止 | `android/app/build.gradle` |
+| 后端地址 | 按环境自动分流（`__DEV__`）：debug → `http://10.0.2.2:3000`，release → `PROD_API_BASE_URL` | `src/services/api.ts` |
 | JDK 路径 | Homebrew openjdk@17 | `android/gradle.properties` |
 
 **关于架构**：`reactNativeArchitectures=arm64-v8a` 表示只编译 ARM64 原生库。
 - Apple Silicon 的模拟器（arm64-v8a）和绝大多数现代真机都能直接用
 - 如需支持 32 位老设备或 x86 模拟器，改成 `armeabi-v7a,arm64-v8a,x86,x86_64`，代价是包体积增大
 
-**关于 `10.0.2.2`**：这是 Android 模拟器访问**宿主机 localhost** 的固定地址。跑任何版本前，记得本地后端要在运行（`cd server && npm run dev`）。
+**关于 `10.0.2.2`**：这是 Android 模拟器访问**宿主机 localhost** 的固定地址，只在「模拟器 + 后端跑在开发机」这一种组合下有效。真机（以及任何 release 包）会把它解析成手机自己的 localhost，必然连不上。
+
+`src/services/api.ts` 已按 `__DEV__` 自动分流，**不需要手动切换**：
+
+```typescript
+const DEV_API_BASE_URL  = 'http://10.0.2.2:3000';      // 仅 debug 构建使用
+const PROD_API_BASE_URL = 'https://api.example.com';   // release 构建使用，部署后必须替换
+
+export const API_BASE_URL = __DEV__ ? DEV_API_BASE_URL : PROD_API_BASE_URL;
+```
+
+- 跑 `npm run android`（debug）前，记得本地后端在运行（`cd server && npm run dev`）
+- 真机连开发机时 `10.0.2.2` 同样不通。与其去查局域网 IP，不如执行 `adb reverse tcp:3000 tcp:3000`，把真机的 `localhost:3000` 转发到开发机
+- release 包走 `PROD_API_BASE_URL`，运行期无法修改（地址已内联进 `index.android.bundle`），换域名只能重新打包
 
 ---
 
@@ -265,7 +278,8 @@ cd android && ./gradlew :app:signingReport --console=plain
 | `Execution failed for task ':app:...'` 找不到 Java | JDK 路径失效，检查 `org.gradle.java.home` |
 | 构建报 `Duplicate resources` | 同名资源在多个 sourceSet 重复定义，检查 `src/main/res` 与 `src/debug/res` |
 | 上架被拒：签名问题 | 用了 debug 签名，按第七节配置正式 keystore 后重新打包 |
-| 上架被拒：明文流量 | 关闭 `usesCleartextTraffic`，后端改用 HTTPS |
+| 上架被拒：明文流量 | release 变体已默认禁止明文（见第八节），通常不会触发；若仍被拒，检查线上后端是否已启用 HTTPS |
+| release 包连不上本地后端 | release 禁止明文 HTTP，且 `PROD_API_BASE_URL` 指向线上。要连本地后端请改用 debug 构建 |
 | 安装包体积过大 | ① 限制 `reactNativeArchitectures`；② 打开 `enableProguardInReleaseBuilds`；③ 检查是否有未压缩的大图资源 |
 | 每次上架都要改版本号 | 递增 `android/app/build.gradle` 中的 `versionCode`（整数，每次 +1），`versionName` 可读即可 |
 | 首次 release 构建特别慢 | 需要跑 Hermes 编译 + JS bundle 打包，属正常；后续增量会快 |
@@ -278,8 +292,8 @@ cd android && ./gradlew :app:signingReport --console=plain
 - [ ] `android/keystore.properties` 已填好（且未提交到 Git）
 - [ ] 构建日志显示 `[signing] ✓ 使用正式签名`
 - [ ] `versionCode` 已递增
-- [ ] `API_BASE_URL` 指向线上地址（不是 `10.0.2.2`）
-- [ ] `API_TOKEN` 与服务端 `.env` 一致
-- [ ] 已关闭 `usesCleartextTraffic`（若后端已上 HTTPS）
+- [ ] `PROD_API_BASE_URL` 已替换为真实 HTTPS 域名（不是占位的 `api.example.com`）
+- [ ] 客户端无需预置密钥（设备令牌由 App 首次启动时自动向服务端注册换取）
+- [ ] 线上后端已启用 HTTPS（release 包已默认禁止明文，无回退余地）
 - [ ] 用 `apksigner verify --print-certs` 确认签名证书不是 `CN=Android Debug`
 - [ ] 在真机上完整跑通一次主要流程（release 与 debug 行为可能不同）
