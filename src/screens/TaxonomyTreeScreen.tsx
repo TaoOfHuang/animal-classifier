@@ -146,7 +146,7 @@ export const TaxonomyTreeScreen: React.FC = () => {
 
   // 面包屑点击
   const handleBreadcrumbPress = useCallback(
-    (item: BreadcrumbItem, index: number) => {
+    (item: BreadcrumbItem, _index: number) => {
       if (!item.item) return;
       setCurrentLevel(item.level);
       // 可以在这里切换显示的分类层级

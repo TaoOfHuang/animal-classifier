@@ -10,9 +10,15 @@
 // 真机（以及任何装出去的 release 包）会把它解析成手机自己的 localhost，必然连不上。
 const DEV_API_BASE_URL = 'http://10.0.2.2:3000';
 
-// TODO(deploy): 部署 server 后替换为真实域名。必须使用 https，否则 release 包
-// 会被 `usesCleartextTraffic = false` 拦掉（见 android/app/build.gradle），请求直接失败。
-const PROD_API_BASE_URL = 'https://api.example.com';
+// ⚠️ 当前是明文 HTTP（2026-09-20 起）：线上 62.234.190.216 的 443 端口上跑的是
+// 没配 TLS 的 Express（TLS 握手必然失败），裸 IP 又拿不到受信任证书，所以改走
+// 80 端口 + http。客户端已同步在 android/app/build.gradle 的 release 构建里
+// 放行明文（usesCleartextTraffic = true），否则请求在 okhttp 层就会被系统拦下，
+// 且只会报 `TypeError: Network request failed`，看不出原因。
+//
+// 不写端口即 80。代价：设备令牌明文传输，发版/上架前必须换回 https。
+// 回退步骤见 docs/02-deploy-to-tencent-cloud.md 与 server/DEPLOYMENT.md。
+const PROD_API_BASE_URL = 'http://62.234.190.216';
 
 /**
  * 后端地址：按构建环境分流。

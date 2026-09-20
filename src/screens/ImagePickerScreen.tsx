@@ -1,6 +1,6 @@
 // 图片选择页面 - 使用 react-native-image-picker
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -33,12 +33,8 @@ export const ImagePickerScreen: React.FC = () => {
   const [selectedMimeType, setSelectedMimeType] = useState<string | undefined>();
   const [isLoading, setIsLoading] = useState(false);
 
-  useEffect(() => {
-    // 页面加载后自动打开图片选择器
-    openImagePicker();
-  }, []);
-
-  const requestStoragePermission = async (): Promise<boolean> => {
+  // 用 useCallback 固定引用：openImagePicker 依赖它，否则会连锁着每次渲染都重建
+  const requestStoragePermission = useCallback(async (): Promise<boolean> => {
     if (Platform.OS !== 'android') {
       return true;
     }
@@ -74,9 +70,9 @@ export const ImagePickerScreen: React.FC = () => {
       console.warn(err);
       return false;
     }
-  };
+  }, []);
 
-  const openImagePicker = async () => {
+  const openImagePicker = useCallback(async () => {
     const hasPermission = await requestStoragePermission();
 
     if (!hasPermission) {
@@ -121,11 +117,27 @@ export const ImagePickerScreen: React.FC = () => {
         setSelectedMimeType(asset.type);
       }
     } catch (error) {
+      // 用户侧只给通用提示，具体异常留在日志里（release 下用
+      // `adb logcat | grep ImagePickerScreen` 能看到），否则无从排查。
+      console.warn('[ImagePickerScreen] 选择图片失败:', error);
       Alert.alert('错误', '选择图片时发生错误');
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [requestStoragePermission, navigation, selectedImage]);
+
+  // 页面加载后自动打开一次图片选择器。
+  //
+  // openImagePicker 已用 useCallback 包裹，但它依赖 selectedImage——用户选完图
+  // 这个状态就变，函数引用跟着变，effect 会重跑。所以再加 hasAutoOpened 做
+  // 「只执行一次」的守卫，否则选完图会立刻又弹出一次选择器。
+  const hasAutoOpened = useRef(false);
+
+  useEffect(() => {
+    if (hasAutoOpened.current) return;
+    hasAutoOpened.current = true;
+    openImagePicker();
+  }, [openImagePicker]);;
 
   const handleConfirm = () => {
     if (selectedImage) {

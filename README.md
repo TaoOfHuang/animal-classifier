@@ -84,7 +84,12 @@ You've successfully run and modified your React Native App. :partying_face:
 
 # Troubleshooting
 
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
+登录服务器
+# 查看最近 100 行日志
+docker logs --tail 100 animal-classifier-api
+
+# 实时滚动跟踪日志（Ctrl+C 退出）
+docker logs -f animal-classifier-api
 
 # Learn More
 

@@ -52,7 +52,9 @@ export const AutoComplete: React.FC<AutoCompleteProps> = ({
   const [history, setHistory] = useState<string[]>([]);
   const [hotTerms, setHotTerms] = useState<string[]>([]);
   const [isFocused, setIsFocused] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
+  // isLoading 目前只写不读：setIsLoading 在请求前后被调用，但 UI 尚未消费这个状态。
+  // 保留状态钩子（而非整个删掉）是为了后续接加载态时不用重新接线。
+  const [, setIsLoading] = useState(false);
 
   const inputRef = useRef<TextInput>(null);
   const dropdownAnim = useRef(new Animated.Value(0)).current;

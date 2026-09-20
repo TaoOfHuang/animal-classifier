@@ -1,4 +1,4 @@
-import { Response, Router } from 'express';
+import { Router } from 'express';
 import { z } from 'zod';
 import { TaxonomyLevel } from '../constants/taxonomy';
 import { isTaxonomyLevel } from '../types/taxonomy';

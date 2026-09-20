@@ -263,12 +263,13 @@ App 的接口地址在 `src/services/apiConfig.ts`，已按构建环境自动分
 
 ```typescript
 const DEV_API_BASE_URL  = 'http://10.0.2.2:3000';      // debug 构建
-const PROD_API_BASE_URL = 'https://api.example.com';   // release 构建 ← 部署后必须替换
+const PROD_API_BASE_URL = 'http://62.234.190.216';     // release 构建 ← 当前明文方案，见下节
 
 export const API_BASE_URL = __DEV__ ? DEV_API_BASE_URL : PROD_API_BASE_URL;
 ```
 
-**部署完 server 后，客户端只需要改这一件事**：把 `PROD_API_BASE_URL` 换成你的真实 HTTPS 域名。
+**部署完 server 后，客户端只需要改这一件事**：把 `PROD_API_BASE_URL` 换成线上地址。
+当前（2026-09-20 起）填的是 `http://62.234.190.216`，原因见下方「明文 HTTP 与 HTTPS」。
 
 **鉴权不用配了**：客户端不再有写死的 `API_TOKEN`。首次启动时 `src/services/deviceAuth.ts`
 会自动用系统设备标识（Android 8+ 的 `ANDROID_ID`）调 `POST /api/auth/device` 换取设备令牌，
@@ -288,14 +289,40 @@ export const API_BASE_URL = __DEV__ ? DEV_API_BASE_URL : PROD_API_BASE_URL;
 
 `android/app/build.gradle` 里按变体分别控制 `usesCleartextTraffic`：
 
-| 变体 | 值 | 原因 |
+| 变体 | 当前值 | 原因 |
 |------|-----|------|
 | `debug` | `true` | 要访问开发机的 `http://10.0.2.2:3000` |
-| `debugOptimized` | `true` | 继承 debug（AGP `initWith`），无需单独配置 |
-| `release` | `false` | **强制 HTTPS**：避免 Bearer Token 明文传输，同时满足应用市场审核要求 |
+| `release` | `true` | **临时放行**，见下方「当前状态」；目标形态是 `false` |
 
-因此线上后端**必须**启用 HTTPS。`PROD_API_BASE_URL` 不能填 `http://` 地址，
-否则 release 包的所有请求会被系统直接拦截（表现为全部接口失败，但不弹任何提示）。
+#### 当前状态：临时走明文 HTTP 80（2026-09-20 起）
+
+线上 `62.234.190.216` 的 443 端口上跑的是没配 TLS 的 Express（TLS 握手必然失败），
+裸 IP 又拿不到 Let's Encrypt 之类的受信任证书，所以**临时**改为明文 HTTP 走 80：
+
+| 位置 | 当前取值 |
+|------|---------|
+| `src/services/apiConfig.ts` | `PROD_API_BASE_URL = 'http://62.234.190.216'`（不写端口即 80） |
+| `android/app/build.gradle` | release 的 `usesCleartextTraffic = true` |
+| 服务端 | Nginx 监听 80 反代到本机 3000，见 `server/nginx.conf` 与 `server/DEPLOYMENT.md` |
+
+> ⚠️ **这是过渡方案，不能上架。** 设备令牌（Bearer Token）全程明文过链路，
+> 可被嗅探或中间人截获；国内主流应用商店与 Google Play 对明文传输敏感数据普遍不予通过。
+
+#### 目标形态：HTTPS
+
+正式形态是 release 禁止明文、后端启用 HTTPS——避免 Bearer Token 明文传输，
+同时满足应用市场审核要求。届时**三处要一起改回**：
+
+| 位置 | 目标值 |
+|------|--------|
+| `android/app/build.gradle` | release → `usesCleartextTraffic = false` |
+| `src/services/apiConfig.ts` | `PROD_API_BASE_URL = 'https://<已备案域名>'` |
+| `server/nginx.conf` | 80 只做 301 跳转，另起 `listen 443 ssl` 的 server 块 |
+
+两端**必须同时改**：地址填了 `http://` 而 `usesCleartextTraffic` 是 `false`，
+release 包的所有请求会被系统直接拦截，表现为全部接口失败但不弹任何提示；
+反过来地址是 `https://` 而后端没做 TLS，则是握手上失败，同样只报
+`TypeError: Network request failed`。
 
 ---
 
@@ -351,7 +378,7 @@ docker compose up -d --build
 | 部署脚本停在 `npm run build` 报找不到 `tsc` | 用了 `npm ci --omit=dev`，需先装全量依赖再构建 |
 | 部署脚本报 `cd: /home//animal-classifier-server: No such file` | 脚本在远程 heredoc 里引用了未展开的变量，已修复为使用 `$HOME` |
 | 服务器内存不足 / 构建被 OOM kill | 低配机器构建吃力：本地构建好 `dist/` 再上传，或加 swap |
-| App 请求全部失败但 `/health` 正常 | ① `PROD_API_BASE_URL` 还是占位符 `api.example.com`；② release 包配了 `http://` 地址 → 被 `usesCleartextTraffic=false` 拦截；③ 设备注册被注册节流拦下（429 `REGISTER_RATE_LIMITED`） |
+| App 请求全部失败但 `/health` 正常 | ① `PROD_API_BASE_URL` 还是占位符；② 地址是 `http://` 而 release 的 `usesCleartextTraffic` 是 `false` → 被系统拦截；③ 设备注册被注册节流拦下（429 `REGISTER_RATE_LIMITED`） |
 | App 返回 403 `DEVICE_REVOKED` | 该设备已被封禁（`POST /api/auth/revoke`），需解除或换设备 |
 | App 返回 429 `DEVICE_QUOTA_EXCEEDED` | 该设备当日额度用完，次日重置。**不要靠清应用数据重注册来绕过**——服务端按 deviceId 记账，重新注册不会重置用量 |
 | App 返回 429 `GLOBAL_QUOTA_EXCEEDED` | 全局额度耗尽（可能有人在刷）。`curl /health` 看 `quota.used`，必要时调高 `GLOBAL_DAILY_LIMIT` 或封禁可疑设备 |

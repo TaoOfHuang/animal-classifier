@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { RootStackParamList, SearchResult, Animal } from '../types';
+import { RootStackParamList, SearchResult } from '../types';
 import {
   colors,
   spacing,
@@ -48,8 +48,8 @@ export const SearchScreen: React.FC = () => {
   const [isSearching, setIsSearching] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [total, setTotal] = useState(0);
-  const [offset, setOffset] = useState(0);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // 历史和热门
   const [searchHistory, setSearchHistory] = useState<string[]>([]);
@@ -58,6 +58,10 @@ export const SearchScreen: React.FC = () => {
   // Refs
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasSearched = useRef(false);
+  // 分页游标：只在 performSearch 内部读写，不参与渲染。
+  // 若用 state，每次搜索都会改它 → performSearch 的依赖变化 → 防抖 effect
+  // 被重新触发，变成反复重搜。用 ref 后 performSearch 依赖为空、引用恒定。
+  const offsetRef = useRef(0);
 
   // 加载历史记录和热门搜索
   useEffect(() => {
@@ -79,11 +83,11 @@ export const SearchScreen: React.FC = () => {
         setIsLoadingMore(true);
       } else {
         setIsSearching(true);
-        setOffset(0);
+        offsetRef.current = 0;
       }
 
       try {
-        const currentOffset = loadMore ? offset : 0;
+        const currentOffset = loadMore ? offsetRef.current : 0;
         const result = await searchAnimals(query, {
           limit: 10,
           offset: currentOffset,
@@ -98,7 +102,7 @@ export const SearchScreen: React.FC = () => {
 
         setTotal(result.total);
         setHasMore(result.hasMore);
-        setOffset(currentOffset + result.results.length);
+        offsetRef.current = currentOffset + result.results.length;
       } catch (error) {
         console.error('Search failed:', error);
       } finally {
@@ -106,7 +110,8 @@ export const SearchScreen: React.FC = () => {
         setIsLoadingMore(false);
       }
     },
-    [offset],
+    // offset 已改用 ref：依赖为空 → 引用恒定，可以安全放进防抖 effect 的依赖数组
+    [],
   );
 
   // 防抖搜索
@@ -129,7 +134,7 @@ export const SearchScreen: React.FC = () => {
         clearTimeout(debounceRef.current);
       }
     };
-  }, [searchQuery]);
+  }, [searchQuery, performSearch]);
 
   // 取消搜索
   const handleCancel = useCallback(() => {
@@ -212,6 +217,18 @@ export const SearchScreen: React.FC = () => {
     }
   }, [isLoadingMore, hasMore, searchQuery, performSearch]);
 
+  // 下拉刷新：重置分页游标后重新搜索当前关键词
+  const handleRefresh = useCallback(async () => {
+    if (!searchQuery.trim()) return;
+    setIsRefreshing(true);
+    offsetRef.current = 0;
+    try {
+      await performSearch(searchQuery);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [performSearch, searchQuery]);
+
   // 渲染搜索结果项
   const renderResultItem = useCallback(
     ({ item }: { item: SearchResult }) => (
@@ -227,7 +244,7 @@ export const SearchScreen: React.FC = () => {
   );
 
   // 渲染历史记录项
-  const renderHistoryItem = (item: string, index: number) => (
+  const renderHistoryItem = (item: string) => (
     <TouchableOpacity
       key={item}
       style={styles.historyItem}
@@ -371,6 +388,14 @@ export const SearchScreen: React.FC = () => {
           ListFooterComponent={ListFooter}
           onEndReached={handleLoadMore}
           onEndReachedThreshold={0.3}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={handleRefresh}
+              tintColor={colors.moss}
+              colors={[colors.moss]}
+            />
+          }
         />
       ) : (
         <EmptyState />

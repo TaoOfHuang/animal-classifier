@@ -14,7 +14,7 @@ import {
   UIManager,
 } from 'react-native';
 import { TaxonomyNode } from '../types';
-import { TaxonomyLevel, TAXONOMY_LEVELS } from '../constants/taxonomy';
+import { TAXONOMY_LEVELS } from '../constants/taxonomy';
 import {
   colors,
   spacing,
@@ -108,12 +108,15 @@ export const TreeNode: React.FC<TreeNodeProps> = ({
     isSpecies,
   ]);
 
-  // 初次展开时加载子节点
+  // 初次展开时加载子节点。
+  //
+  // 依赖是补全的，不会死循环：loadChildren 内部首行就用 isLoading 做了重入保护，
+  // 且加载完成后 children.length > 0，上面的条件不再成立。
   useEffect(() => {
     if (isExpanded && children.length === 0 && hasChildren && !isSpecies) {
       loadChildren();
     }
-  }, [isExpanded]);
+  }, [isExpanded, children.length, hasChildren, isSpecies, loadChildren]);
 
   const handlePress = useCallback(() => {
     if (hasChildren && !isSpecies) {
@@ -257,7 +260,7 @@ export const TreeNode: React.FC<TreeNodeProps> = ({
           <View style={[styles.connectionLine, { left: depth * 20 + 15 }]} />
 
           {/* 子节点列表 */}
-          {children.map((child, index) => (
+          {children.map(child => (
             <TreeNode
               key={child.id}
               node={child}

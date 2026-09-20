@@ -3,7 +3,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { IUCNStatus, IUCN_STATUS } from '../constants/taxonomy';
-import { colors, spacing, borderRadius, typography } from '../constants/theme';
+import { colors, spacing, borderRadius } from '../constants/theme';
 
 interface EndangeredBadgeProps {
   status: IUCNStatus;

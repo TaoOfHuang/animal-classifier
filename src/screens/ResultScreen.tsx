@@ -13,7 +13,7 @@ import LinearGradient from 'react-native-linear-gradient';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
-import { colors, spacing, borderRadius, typography, shadows, gradients } from '../constants/theme';
+import { colors, spacing, borderRadius, typography, gradients } from '../constants/theme';
 import { Card, TaxonomyPath, EndangeredBadge, Button, Icon, FallbackImage } from '../components';
 
 type ResultRouteProp = RouteProp<RootStackParamList, 'Result'>;
@@ -154,12 +154,21 @@ export const ResultScreen: React.FC = () => {
 
       {/* 底部操作栏 */}
       <View style={styles.bottomBar}>
-        <Button
-          title="查看完整分类树"
-          onPress={handleViewTree}
-          fullWidth
-          icon={<Icon name="tree" size={20} color={colors.white} />}
-        />
+        <View style={styles.bottomBarRow}>
+          <Button
+            title="查看详情"
+            onPress={handleViewDetail}
+            variant="secondary"
+            style={styles.bottomBarButton}
+            icon={<Icon name="info" size={18} color={colors.earthDark} />}
+          />
+          <Button
+            title="分类树"
+            onPress={handleViewTree}
+            style={styles.bottomBarButton}
+            icon={<Icon name="tree" size={18} color={colors.white} />}
+          />
+        </View>
       </View>
     </View>
   );
@@ -295,6 +304,14 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     paddingBottom: 40,
     backgroundColor: colors.ivory,
+  },
+  // 「查看详情」与「分类树」并排等宽
+  bottomBarRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  bottomBarButton: {
+    flex: 1,
   },
 });
 

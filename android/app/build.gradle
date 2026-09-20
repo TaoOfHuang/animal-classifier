@@ -135,10 +135,19 @@ android {
             signingConfig hasReleaseSigning ? signingConfigs.release : signingConfigs.debug
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
-            // 正式包禁止明文 HTTP：服务器必须是 HTTPS 地址。
-            // 作用：① 避免 Bearer Token 在链路上明文传输；② 满足应用市场的审核要求。
-            // 注意：release 包将无法访问任何 http:// 接口，本地调试请用 debug 构建。
-            manifestPlaceholders = [usesCleartextTraffic: false]
+            // ⚠️ 临时放行明文 HTTP（2026-09-20 起）。
+            //
+            // 原因：线上后端 62.234.190.216 目前只有明文 HTTP——443 上跑的是没配
+            // TLS 的 Express（TLS 握手必然失败），裸 IP 又拿不到 Let's Encrypt
+            // 之类的受信任证书。所以 release 包暂时必须允许 http:// 才能连通。
+            //
+            // 代价（发版/上架前必须回退为 false）：
+            //   ① 设备令牌（Bearer Token）全程明文传输，可被链路嗅探或中间人截获；
+            //   ② 国内主流应用商店与 Google Play 对明文传输敏感数据普遍不予通过。
+            //
+            // 回退条件：服务器有域名 + 证书、nginx 真正做 TLS 终结之后，
+            //           这里改回 false，并把 PROD_API_BASE_URL 换回 https:// 地址。
+            manifestPlaceholders = [usesCleartextTraffic: true]
         }
     }
 }

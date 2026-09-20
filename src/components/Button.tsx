@@ -10,7 +10,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import LinearGradient from 'react-native-linear-gradient';
-import { colors, spacing, borderRadius, typography, shadows } from '../constants/theme';
+import { colors, spacing, borderRadius, shadows } from '../constants/theme';
 
 interface ButtonProps {
   title: string;

@@ -109,6 +109,9 @@ export const CameraScreen: React.FC = () => {
         });
       }
     } catch (error) {
+      // 用户侧只给通用提示，具体异常留在日志里（release 下用
+      // `adb logcat | grep CameraScreen` 能看到），否则这类失败无从排查。
+      console.warn('[CameraScreen] 拍照失败:', error);
       Alert.alert('错误', '拍照时发生错误');
     } finally {
       setIsCapturing(false);

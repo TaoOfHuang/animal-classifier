@@ -9,7 +9,6 @@ import {
   ScrollView,
   StatusBar,
   TouchableOpacity,
-  Dimensions,
   Share,
   Alert,
   Animated,
@@ -41,8 +40,6 @@ import {
   isConcerningStatus,
   mergeRemoteAnimal,
 } from './animalDetail';
-
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 type AnimalDetailRouteProp = RouteProp<RootStackParamList, 'AnimalDetail'>;
 type AnimalDetailNavigationProp = NativeStackNavigationProp<

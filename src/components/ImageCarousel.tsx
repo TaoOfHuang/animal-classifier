@@ -11,7 +11,6 @@ import {
   Animated,
   NativeSyntheticEvent,
   NativeScrollEvent,
-  ImageSourcePropType,
   Modal,
   StatusBar,
 } from 'react-native';
