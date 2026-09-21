@@ -384,6 +384,30 @@ git checkout <上一个正常的 commit>
 docker compose up -d --build
 ```
 
+### 查看DB
+```bash
+.mode box                          -- 表格输出好看点
+.tables                            -- 看 4 张表
+
+-- 设备列表（token 只显示前 8 位，别把哈希全打出来）
+SELECT id, device_id, whitelisted, substr(token_hash,1,8) AS token_head,
+       datetime(created_at/1000,'unixepoch','localtime') AS created,
+       datetime(revoked_at/1000,'unixepoch','localtime') AS revoked
+FROM devices;
+
+-- 今天各设备用了多少次
+SELECT d.device_id, u.day, u.calls
+FROM usage_daily u JOIN devices d ON d.id = u.device_row_id
+ORDER BY u.day DESC, u.calls DESC;
+
+-- 全局用量（财务保险丝）
+SELECT * FROM global_usage;
+
+-- 注册节流日志
+SELECT ip, COUNT(*) AS times, datetime(MAX(created_at)/1000,'unixepoch','localtime') AS last
+FROM register_log GROUP BY ip;
+```
+
 ---
 
 ## 十一、常见问题
