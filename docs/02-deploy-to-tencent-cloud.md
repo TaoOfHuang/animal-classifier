@@ -287,12 +287,28 @@ export const API_BASE_URL = __DEV__ ? DEV_API_BASE_URL : PROD_API_BASE_URL;
 
 ### 明文 HTTP 与 HTTPS
 
-`android/app/build.gradle` 里按变体分别控制 `usesCleartextTraffic`：
+`usesCleartextTraffic` **不能**在 `android/app/build.gradle` 的 `buildTypes` 里配置。
+React Native 的 Gradle 插件（`@react-native/gradle-plugin` 的
+`AgpConfiguratorUtils.configureBuildTypesForApp`）会用 `finalizeDsl` 无条件覆写这个占位符：
 
-| 变体 | 当前值 | 原因 |
+| 变体 | 插件强制值 | 说明 |
 |------|-----|------|
-| `debug` | `true` | 要访问开发机的 `http://10.0.2.2:3000` |
-| `release` | `true` | **临时放行**，见下方「当前状态」；目标形态是 `false` |
+| `debug` / `debugOptimized` | `true` | 为连开发机的 `http://10.0.2.2:3000` |
+| `release` | `false` | 插件里硬编码 |
+
+`finalizeDsl` 在 DSL 求值的**最后**阶段执行，晚于 `buildTypes { }` 块，所以在那里写的值会被丢掉——
+表现为 release 清单里始终是 `false`，明文请求被系统拦截，JS 侧只看到
+`TypeError: Network request failed`，极具误导性。
+
+release 要放行明文，只能再注册一次 `finalizeDsl`（两者按注册顺序执行，后注册的后执行）：
+`app/build.gradle` 末尾的 `androidComponents { finalizeDsl { } }` 块，由 `enableCleartextInRelease` 开关控制。
+
+改完**务必验证实际进包的取值**，不要只看源码：
+
+```bash
+aapt2 dump xmltree --file AndroidManifest.xml \
+  android/app/build/outputs/apk/release/app-release.apk | grep -i cleartext
+```
 
 #### 当前状态：临时走明文 HTTP 80（2026-09-20 起）
 
@@ -302,7 +318,7 @@ export const API_BASE_URL = __DEV__ ? DEV_API_BASE_URL : PROD_API_BASE_URL;
 | 位置 | 当前取值 |
 |------|---------|
 | `src/services/apiConfig.ts` | `PROD_API_BASE_URL = 'http://62.234.190.216'`（不写端口即 80） |
-| `android/app/build.gradle` | release 的 `usesCleartextTraffic = true` |
+| `android/app/build.gradle` | `enableCleartextInRelease = true`（经 `androidComponents.finalizeDsl` 写入 release） |
 | 服务端 | Nginx 监听 80 反代到本机 3000，见 `server/nginx.conf` 与 `server/DEPLOYMENT.md` |
 
 > ⚠️ **这是过渡方案，不能上架。** 设备令牌（Bearer Token）全程明文过链路，
@@ -315,7 +331,7 @@ export const API_BASE_URL = __DEV__ ? DEV_API_BASE_URL : PROD_API_BASE_URL;
 
 | 位置 | 目标值 |
 |------|--------|
-| `android/app/build.gradle` | release → `usesCleartextTraffic = false` |
+| `android/app/build.gradle` | `enableCleartextInRelease` → `false` |
 | `src/services/apiConfig.ts` | `PROD_API_BASE_URL = 'https://<已备案域名>'` |
 | `server/nginx.conf` | 80 只做 301 跳转，另起 `listen 443 ssl` 的 server 块 |
 

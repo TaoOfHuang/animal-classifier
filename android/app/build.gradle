@@ -60,6 +60,20 @@ react {
 def enableProguardInReleaseBuilds = false
 
 /**
+ * ── 临时开关：release 包是否放行明文 HTTP ─────────────────────────────
+ *
+ * 2026-09-20 起因：线上后端 62.234.190.216 目前只有明文 HTTP——443 上跑的是
+ * 没配 TLS 的 Express（TLS 握手必然失败），裸 IP 又拿不到 Let's Encrypt 之类的
+ * 受信任证书。所以 release 包暂时必须允许 http:// 才能连通。
+ *
+ * ⚠️ 上架前必须改回 false，并把 PROD_API_BASE_URL 换回 https:// 地址。
+ *
+ * 注意：这个开关**不能**靠 android.buildTypes.release.manifestPlaceholders 实现，
+ * 会被 React Native 插件覆写掉，原因见文件末尾 androidComponents 那一段。
+ */
+def enableCleartextInRelease = true
+
+/**
  * ── 发布签名配置 ──────────────────────────────────────────────────
  * 读取顺序：android/keystore.properties（推荐）> -PRELEASE_* 命令行参数。
  * keystore.properties 已在 .gitignore 中忽略，密码不会进入版本库。
@@ -126,8 +140,9 @@ android {
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
-            // 开发期要访问 http://10.0.2.2:3000（模拟器 → 宿主机），必须放行明文。
-            manifestPlaceholders = [usesCleartextTraffic: true]
+            // 开发期要访问 http://10.0.2.2:3000（模拟器 → 宿主机），需要放行明文。
+            // 这里**不要**写 manifestPlaceholders —— RN 插件会覆写，写了也是死代码，
+            // 原因见文件末尾 androidComponents 那段注释。
         }
         release {
             // 未配置正式签名时会回退到 debug 签名（仅便于本地测性能），
@@ -135,19 +150,43 @@ android {
             signingConfig hasReleaseSigning ? signingConfigs.release : signingConfigs.debug
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
-            // ⚠️ 临时放行明文 HTTP（2026-09-20 起）。
+            // ⚠️ release 的明文放行由文件末尾的 androidComponents { finalizeDsl { } }
+            //    按 enableCleartextInRelease 开关控制，不在这里写 manifestPlaceholders。
             //
-            // 原因：线上后端 62.234.190.216 目前只有明文 HTTP——443 上跑的是没配
-            // TLS 的 Express（TLS 握手必然失败），裸 IP 又拿不到 Let's Encrypt
-            // 之类的受信任证书。所以 release 包暂时必须允许 http:// 才能连通。
-            //
-            // 代价（发版/上架前必须回退为 false）：
+            // 代价（发版/上架前必须回退）：
             //   ① 设备令牌（Bearer Token）全程明文传输，可被链路嗅探或中间人截获；
             //   ② 国内主流应用商店与 Google Play 对明文传输敏感数据普遍不予通过。
             //
             // 回退条件：服务器有域名 + 证书、nginx 真正做 TLS 终结之后，
-            //           这里改回 false，并把 PROD_API_BASE_URL 换回 https:// 地址。
-            manifestPlaceholders = [usesCleartextTraffic: true]
+            //           把上面的 enableCleartextInRelease 改为 false，
+            //           并把 PROD_API_BASE_URL 换回 https:// 地址。
+        }
+    }
+}
+
+/**
+ * ⚠️ 为什么 release 的 usesCleartextTraffic 必须在 finalizeDsl 里改
+ * ─────────────────────────────────────────────────────────────────────
+ * React Native 的 Gradle 插件（@react-native/gradle-plugin 的
+ * AgpConfiguratorUtils.configureBuildTypesForApp）用 finalizeDsl 无条件覆写了这个占位符：
+ *
+ *     debug / debugOptimized → manifestPlaceholders["usesCleartextTraffic"] = "true"
+ *     release                → manifestPlaceholders["usesCleartextTraffic"] = "false"
+ *
+ * finalizeDsl 在 DSL 求值的最后阶段执行，**晚于**本文件里的 android { } 块。
+ * 所以在 buildTypes.release 里写 manifestPlaceholders 是死代码，永远不生效——
+ * 表现为 release APK 的清单里始终是 false，明文请求被系统拦掉，
+ * JS 侧只看到 `TypeError: Network request failed`，排查时极具误导性。
+ *
+ * 这里再注册一次 finalizeDsl：它比插件那次注册得晚，因而**后**执行，覆盖才生效。
+ * 升级 React Native 后如果此行为有变，用这条命令验证 release 清单的实际取值：
+ *   aapt2 dump xmltree --file AndroidManifest.xml \
+ *     android/app/build/outputs/apk/release/app-release.apk | grep -i cleartext
+ */
+androidComponents {
+    finalizeDsl { ext ->
+        if (enableCleartextInRelease) {
+            ext.buildTypes.getByName("release").manifestPlaceholders["usesCleartextTraffic"] = "true"
         }
     }
 }

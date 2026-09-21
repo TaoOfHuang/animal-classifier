@@ -113,6 +113,11 @@ cd android && ./gradlew installRelease
 - **`__DEV__ === false`**：所有 `if (__DEV__)` 的开发分支都不会执行
 - **会覆盖同包名的 debug 版**：两者 `applicationId` 相同，装 release 会覆盖 debug（详见第十节）
 
+### 查看log
+```bash
+adb logcat | grep -i "ReactNative\|AndroidRuntime"
+ ```
+
 ---
 
 ## 六、打包产物（APK / AAB）
@@ -264,7 +269,8 @@ export const API_BASE_URL = __DEV__ ? DEV_API_BASE_URL : PROD_API_BASE_URL;
 - 跑 `npm run android`（debug）前，记得本地后端在运行（`cd server && npm run dev`）
 - 真机连开发机时 `10.0.2.2` 同样不通。与其去查局域网 IP，不如执行 `adb reverse tcp:3000 tcp:3000`，把真机的 `localhost:3000` 转发到开发机
 - release 包走 `PROD_API_BASE_URL`，运行期无法修改（地址已内联进 `index.android.bundle`），换域名只能重新打包
-- ⚠️ 当前 `PROD_API_BASE_URL` 是明文 `http://`，靠 release 的 `usesCleartextTraffic = true` 放行才能连通。
+- ⚠️ 当前 `PROD_API_BASE_URL` 是明文 `http://`，靠 `app/build.gradle` 的 `enableCleartextInRelease = true`
+  （经 `androidComponents.finalizeDsl` 写入 release 变体）放行才能连通。
   这两个值必须**成对**出现：地址是 `http://` 而开关是 `false`，release 包所有请求会被系统静默拦掉，
   只报 `TypeError: Network request failed`；反过来地址是 `https://` 而后端没做 TLS，则是握手上失败。
   目标形态（HTTPS）与回退步骤见第八节与 `server/nginx.conf` 末尾
@@ -282,7 +288,9 @@ export const API_BASE_URL = __DEV__ ? DEV_API_BASE_URL : PROD_API_BASE_URL;
 | `Execution failed for task ':app:...'` 找不到 Java | JDK 路径失效，检查 `org.gradle.java.home` |
 | 构建报 `Duplicate resources` | 同名资源在多个 sourceSet 重复定义，检查 `src/main/res` 与 `src/debug/res` |
 | 上架被拒：签名问题 | 用了 debug 签名，按第七节配置正式 keystore 后重新打包 |
-| 上架被拒：明文流量 | ⚠️ **当前会命中**：release 正在临时放行明文（`usesCleartextTraffic = true`）。上架前必须先把后端升级到 HTTPS，再按第八节改回 `false` |
+| 上架被拒：明文流量 | ⚠️ **当前会命中**：release 正在临时放行明文（`enableCleartextInRelease = true`）。上架前必须先把后端升级到 HTTPS，再按第八节改回 `false` |
+| release 请求全部失败，但 `adb shell` 里能连通服务器 | ⚠️ **最容易踩的坑**：在 `buildTypes.release` 里写 `manifestPlaceholders` 是死代码——RN 的 Gradle 插件用 `finalizeDsl`（晚于 `buildTypes` 块）无条件覆写这个占位符，release 恒为 `false`。必须用文件末尾的 `androidComponents { finalizeDsl { } }` 覆盖。**别只看源码，验证实际进包的值**：<br>`aapt2 dump xmltree --file AndroidManifest.xml android/app/build/outputs/apk/release/app-release.apk \| grep -i cleartext` |
+| 改了 `build.gradle` 但重打包没变化 | 先按上一行验证 APK 里的真实取值。注意增量构建可能不重新合并清单，必要时删 `android/app/build/intermediates/merged_manifest*` |
 | release 包连不上本地后端 | `PROD_API_BASE_URL` 指向线上，要连本地后端请改用 debug 构建 |
 | 安装包体积过大 | ① 限制 `reactNativeArchitectures`；② 打开 `enableProguardInReleaseBuilds`；③ 检查是否有未压缩的大图资源 |
 | 每次上架都要改版本号 | 递增 `android/app/build.gradle` 中的 `versionCode`（整数，每次 +1），`versionName` 可读即可 |
@@ -298,7 +306,7 @@ export const API_BASE_URL = __DEV__ ? DEV_API_BASE_URL : PROD_API_BASE_URL;
 - [ ] `versionCode` 已递增
 - [ ] `PROD_API_BASE_URL` 已替换为真实 HTTPS 域名（不是占位值，也不是临时的 `http://62.234.190.216`）
 - [ ] 客户端无需预置密钥（设备令牌由 App 首次启动时自动向服务端注册换取）
-- [ ] 线上后端已启用 HTTPS，且 release 的 `usesCleartextTraffic` 已改回 `false`
+- [ ] 线上后端已启用 HTTPS，且 `android/app/build.gradle` 的 `enableCleartextInRelease` 已改回 `false`
       （当前是 `true` 的临时明文方案，**不满足上架条件**，见第八节与 `server/nginx.conf` 末尾）
 - [ ] 用 `apksigner verify --print-certs` 确认签名证书不是 `CN=Android Debug`
 - [ ] 在真机上完整跑通一次主要流程（release 与 debug 行为可能不同）

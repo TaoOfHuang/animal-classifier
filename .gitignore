@@ -83,6 +83,7 @@ server/.env
 # 构建产物（server 编译输出，勿提交）
 dist/
 server/dist/
+server/data/
 
 # WorkBuddy 本地数据
 .workbuddy/

@@ -1,7 +1,13 @@
 // 图片轮播组件
 // 支持自动播放、手势滑动、分页指示器
 
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, {
+  useState,
+  useRef,
+  useCallback,
+  useEffect,
+  useMemo,
+} from 'react';
 import {
   View,
   StyleSheet,
@@ -46,9 +52,21 @@ export const ImageCarousel: React.FC<ImageCarouselProps> = ({
   const [fullScreenIndex, setFullScreenIndex] = useState(0);
   const flatListRef = useRef<FlatList>(null);
   const autoPlayRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const paginationAnim = useRef(
-    images.map(() => new Animated.Value(0)),
-  ).current;
+  // 分页点动画值：数量必须跟随 images 同步。
+  //
+  // 原实现是 useRef(images.map(...))——数组只在**首次渲染**生成一次，
+  // 之后 images 变长也不会补。而详情页恰好是这个时序：先用本地兜底图
+  // （DEFAULT_FALLBACK_IMAGES，3 张）渲染，远端详情返回后 mergeRemoteAnimal
+  // 换成真实图片，数量一变多，paginationAnim[index] 就是 undefined，
+  // 渲染分页点时 `.interpolate` 直接抛错（Render Error，整页红屏）。
+  //
+  // 依赖写成 images.length 而不是 images：后者每次 mergeRemoteAnimal 都是
+  // 新数组引用，会无谓重建全部 Animated.Value。
+  const imageCount = images.length;
+  const paginationAnim = useMemo(
+    () => Array.from({ length: imageCount }, () => new Animated.Value(0)),
+    [imageCount],
+  );
 
   // 更新分页动画
   useEffect(() => {
@@ -177,7 +195,14 @@ export const ImageCarousel: React.FC<ImageCarouselProps> = ({
   const renderPagination = () => (
     <View style={styles.pagination}>
       {images.map((_, index) => {
-        const scale = paginationAnim[index].interpolate({
+        const anim = paginationAnim[index];
+        // 兜底：正常情况不会走到这里（paginationAnim 已随 images 同步），
+        // 但一个越界的 Animated.Value 会让整页红屏，代价远大于少画一个点。
+        if (!anim) {
+          return null;
+        }
+
+        const scale = anim.interpolate({
           inputRange: [0, 1],
           outputRange: [1, 1.3],
         });
@@ -185,6 +210,7 @@ export const ImageCarousel: React.FC<ImageCarouselProps> = ({
         return (
           <Animated.View
             key={index}
+            testID={`carousel-dot-${index}`}
             style={[
               styles.paginationDot,
               index === activeIndex && styles.paginationDotActive,
