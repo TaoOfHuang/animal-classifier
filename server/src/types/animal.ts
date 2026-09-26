@@ -34,6 +34,14 @@ export type AnimalLike = {
 export type AnimalDataSources = {
   taxonomy: 'itis' | 'llm' | 'none';
   conservation: 'iucn_v4' | 'static' | 'none';
+  /**
+   * habitat / lifestyle / distribution 这类**叙述性**字段。
+   *
+   * ITIS 与 IUCN 都不提供它们（IUCN 的 habitats 结构化分类见 conservation/README.md，
+   * 本服务未取用），唯一来源是识别时让视觉模型一并写出来。因此必须单独标注为
+   * 'llm'，免得被当成和分类、濒危同级的权威数据。
+   */
+  narrative: 'llm' | 'none';
 };
 
 export type EnrichedAnimal = AnimalLike & {

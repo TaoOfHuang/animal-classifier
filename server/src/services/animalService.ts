@@ -130,6 +130,20 @@ const resolveConservation = async (
 };
 
 /**
+ * 叙述性字段（栖息地 / 生活习性 / 分布）是否来自 LLM。
+ *
+ * 这三个字段 ITIS 和 IUCN 都不产出，唯一来源是识别时视觉模型的输出，
+ * 所以只区分「有」和「没有」，并在 dataSources 里如实标注 —— 前端与排查
+ * 都不该把它们和 ITIS 分类、IUCN 等级混为一谈。
+ */
+const hasLlmNarrative = (animal: AnimalLike): boolean =>
+  Boolean(
+    animal.habitat?.trim() ||
+      animal.lifestyle?.trim() ||
+      animal.distribution?.trim(),
+  );
+
+/**
  * 把 ITIS（分类）与 IUCN（濒危）的结果合并进动物对象。
  * 两个外部依赖**各自独立降级**：任一方失败都不得让整个请求失败，
  * 也不得编造缺失的字段。
@@ -143,6 +157,7 @@ export const enrichAnimal = async (base: AnimalLike): Promise<EnrichedAnimal> =>
       dataSources: {
         taxonomy: hasAnyLevel(base.taxonomy ?? {}) ? 'llm' : 'none',
         conservation: base.conservationStatus ? 'static' : 'none',
+        narrative: hasLlmNarrative(base) ? 'llm' : 'none',
       },
     };
   }
@@ -187,6 +202,8 @@ export const enrichAnimal = async (base: AnimalLike): Promise<EnrichedAnimal> =>
     dataSources: {
       taxonomy: taxonomySource,
       conservation: conservationOutcome.source,
+      // applyLineage 用展开语法合并，LLM 写出的叙述性文本会原样保留
+      narrative: hasLlmNarrative(animal) ? 'llm' : 'none',
     },
   };
 };

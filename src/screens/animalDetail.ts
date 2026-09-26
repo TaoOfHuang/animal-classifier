@@ -35,33 +35,60 @@ export const getTrendLabel = (trend?: string): string => {
   }
 };
 
+/**
+ * 详情接口 `/api/animal/:id` 的 key 是**学名（双名法）**。
+ *
+ * 三名法（亚种）会被直接判 404 —— 线上实测：
+ *   GET /api/animal/Panthera tigris          → 200
+ *   GET /api/animal/Panthera tigris altaica  → 404
+ * 而识别结果与首页示例数据里都可能出现亚种名（如东北虎），
+ * 因此查询前先规整成「属 + 种」两个词。
+ */
+export const toBinomialName = (name?: string): string => {
+  const parts = (name ?? '').trim().split(/\s+/).filter(Boolean);
+  return parts.slice(0, 2).join(' ');
+};
+
+/**
+ * 详情页依次尝试的查询 key。
+ *
+ * 顺序即优先级：**双名法学名 → 原始学名 → 原始 id**。
+ *
+ * 为什么要「依次尝试」而不是直接取一个：
+ * - `animal.id` 并不可靠。识别链路里它是后端给的学名，但首页示例数据里是
+ *   `'1'`~`'4'` 这类序号，直接拿它查会 404（`No animal found for "2"`）。
+ * - 所以学名优先，id 只作为最后的兜底。
+ */
+export const buildDetailLookupCandidates = (animal: Partial<Animal>): string[] => {
+  const candidates = [
+    toBinomialName(animal.scientificName),
+    animal.scientificName?.trim(),
+    animal.id?.trim(),
+  ].filter((value): value is string => Boolean(value));
+
+  return [...new Set(candidates)];
+};
+
 const DEFAULT_FALLBACK_IMAGES = [
   'https://images.unsplash.com/photo-1564349683136-77e08dba1ef7?w=800',
   'https://images.unsplash.com/photo-1527118732049-c88155f2107c?w=800',
   'https://images.unsplash.com/photo-1540126034813-121bf29033d2?w=800',
 ];
 
-// 后端不提供这些叙述性文本，属于本地兜底内容，按科区分以免张冠李戴。
-const HABITAT_BY_FAMILY: Record<string, string> = {
-  Ursidae:
-    '仅分布于中国四川、陕西和甘肃的高山竹林中。栖息地海拔通常在 1,200-3,400 米之间，偏好凉爽湿润的环境，以竹子为主要食物来源。',
-  Felidae:
-    '主要分布于俄罗斯远东地区、中国东北部及朝鲜北部。栖息于针阔混交林、落叶阔叶林等森林生态系统，偏好有丰富猎物和水源的区域。',
-};
-
-const LIFESTYLE_BY_FAMILY: Record<string, string> = {
-  Ursidae:
-    '大熊猫是独居动物，每天需要花费 12-16 小时进食竹子。虽属于食肉目，但 99% 的食物是竹子。善于爬树，游泳能力也很强。',
-  Felidae:
-    '独居动物，领地意识强。主要在晨昏活动，善于游泳。以野猪、马鹿、狍子等有蹄类为主要猎物。',
-};
-
-const GENERIC_HABITAT = '栖息地信息整理中，可先参考其分类与分布资料。';
-const GENERIC_LIFESTYLE = '生活习性信息整理中，可先参考其分类与分布资料。';
+// 叙述性文本（habitat / lifestyle / distribution）由识别链路让视觉模型一并产出，
+// 见 server/src/services/recognitionService.ts 的 RECOGNITION_PROMPT。
+//
+// 这里**不做任何按物种或按科的硬编码兜底**。历史上曾按「科」硬编码：
+// HABITAT_BY_FAMILY['Felidae'] 写的是东北虎的具体分布（俄罗斯远东 + 中国东北），
+// 结果是猫科的任何动物（家猫、狮、豹）都会显示这段文字，属于张冠李戴，已删除。
+//
+// 模型没写出来时只留一句如实说明 —— 不要「整理中」这种暗示「稍后会有」的假占位。
+const GENERIC_HABITAT = '暂无该物种的栖息地资料。';
+const GENERIC_LIFESTYLE = '暂无该物种的生活习性资料。';
+const GENERIC_DISTRIBUTION = '暂无该物种的分布资料。';
 
 /** 本地兜底构造：只在真实数据拿不到时使用 */
 export const buildLocalAnimal = (partial: Partial<Animal>): Animal => {
-  const family = partial.taxonomy?.family?.scientificName ?? '';
   const commonNameZh = partial.commonNameZh || '未知动物';
   const scientificName = partial.scientificName || '';
 
@@ -71,11 +98,9 @@ export const buildLocalAnimal = (partial: Partial<Animal>): Animal => {
     commonNameEn: partial.commonNameEn || 'Unknown Animal',
     scientificName,
     description: partial.description || `${commonNameZh}是一种令人惊叹的动物。`,
-    habitat:
-      partial.habitat || HABITAT_BY_FAMILY[family] || GENERIC_HABITAT,
-    lifestyle:
-      partial.lifestyle || LIFESTYLE_BY_FAMILY[family] || GENERIC_LIFESTYLE,
-    distribution: partial.distribution || '分布信息整理中。',
+    habitat: partial.habitat || GENERIC_HABITAT,
+    lifestyle: partial.lifestyle || GENERIC_LIFESTYLE,
+    distribution: partial.distribution || GENERIC_DISTRIBUTION,
     // 没有就留空：详情页据此决定是否渲染濒危卡片
     conservationStatus: partial.conservationStatus,
     images: partial.images?.length ? partial.images : DEFAULT_FALLBACK_IMAGES,
@@ -91,8 +116,10 @@ export const buildLocalAnimal = (partial: Partial<Animal>): Animal => {
 
 /**
  * 把后端返回的真实数据合并进本地对象。
- * 后端不提供的叙述性字段（habitat / lifestyle / description / distribution）
- * 保留本地兜底，其余一律以后端为准。
+ *
+ * 注意：详情接口 `/api/animal/:id` **不产出**叙述性字段（habitat / lifestyle /
+ * description / distribution）—— 它们只可能来自识别链路的视觉模型。因此这里对这几个
+ * 字段一律保留本地已有的值，避免详情接口的响应把识别结果里已经拿到的内容冲掉。
  */
 export const mergeRemoteAnimal = (local: Animal, remote: Partial<Animal>): Animal => {
   const remoteTaxonomy = remote.taxonomy && Object.keys(remote.taxonomy).length > 0

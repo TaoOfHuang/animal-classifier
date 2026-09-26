@@ -34,6 +34,7 @@ import {
 import { IUCN_STATUS } from '../constants/taxonomy';
 import { getAnimalDetail } from '../services/searchService';
 import {
+  buildDetailLookupCandidates,
   buildLocalAnimal,
   getIucnLabel,
   getTrendLabel,
@@ -57,31 +58,55 @@ export const AnimalDetailScreen: React.FC = () => {
     buildLocalAnimal(route.params.animal),
   );
 
-  const lookupId = route.params.animal.id || route.params.animal.scientificName;
+  // 详情接口的 key 是学名（双名法），而 `animal.id` 未必可靠：
+  // 识别链路里它是后端给的学名，首页「最近识别」的示例数据里却是 '1'~'4' 这类序号。
+  // 所以按 [双名法学名 → 原始学名 → 原始 id] 依次尝试，首个命中即用。
+  const lookupCandidates = buildDetailLookupCandidates(route.params.animal);
+  const lookupKey = lookupCandidates.join('|');
 
   useEffect(() => {
-    if (!lookupId) {
+    if (!lookupKey) {
       return;
     }
 
     let cancelled = false;
 
-    getAnimalDetail(lookupId)
-      .then(remote => {
-        if (cancelled || !remote) {
-          return;
+    const loadDetail = async () => {
+      // '|' 不会出现在学名里，用它把候选串解开可以保证依赖项稳定、不重复请求。
+      const candidates = lookupKey.split('|');
+      let lastError: unknown;
+
+      for (const candidate of candidates) {
+        try {
+          // getAnimalDetail 查无此物时返回 null（内部已记录降级日志），继续试下一个候选
+          const remote = await getAnimalDetail(candidate);
+          if (cancelled) {
+            return;
+          }
+          if (remote) {
+            setAnimal(prev => mergeRemoteAnimal(prev, remote));
+            return;
+          }
+        } catch (error) {
+          lastError = error;
         }
-        setAnimal(prev => mergeRemoteAnimal(prev, remote));
-      })
-      .catch(error => {
+      }
+
+      if (!cancelled && lastError) {
         // eslint-disable-next-line no-console
-        console.error(`[AnimalDetail] detail fetch failed for ${lookupId}:`, error);
-      });
+        console.error(
+          `[AnimalDetail] detail fetch failed for ${candidates.join(' → ')}:`,
+          lastError,
+        );
+      }
+    };
+
+    loadDetail();
 
     return () => {
       cancelled = true;
     };
-  }, [lookupId]);
+  }, [lookupKey]);
 
   // 收藏状态
   const [isFavorite, setIsFavorite] = useState(false);
@@ -153,6 +178,8 @@ export const AnimalDetailScreen: React.FC = () => {
   const statusLabel = getIucnLabel(animal.conservationStatus?.iucnStatus);
   const trendLabel = getTrendLabel(animal.conservationStatus?.populationTrend);
   const trend = animal.conservationStatus?.populationTrend;
+  // 主要威胁：后端（静态数据集或 IUCN v4）一直会返回，此前前端一个像素都没渲染
+  const threats = animal.conservationStatus?.threats ?? [];
   const trendIcon =
     trend === 'increasing' ? 'arrowUp' : trend === 'decreasing' ? 'arrowDown' : 'minus';
   const trendColor =
@@ -350,6 +377,18 @@ export const AnimalDetailScreen: React.FC = () => {
                   </Text>
                 </View>
               )}
+              {threats.length > 0 && (
+                <View style={styles.threatBlock}>
+                  <Text style={styles.threatTitle}>主要威胁</Text>
+                  <View style={styles.threatTags}>
+                    {threats.map(threat => (
+                      <View key={threat} style={styles.threatTag}>
+                        <Text style={styles.threatTagText}>{threat}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              )}
             </Card>
           )}
 
@@ -360,6 +399,14 @@ export const AnimalDetailScreen: React.FC = () => {
               <Text style={styles.cardTitle}>栖息地与分布</Text>
             </View>
             <Text style={styles.cardContent}>{animal.habitat}</Text>
+            {/* 标题写着「分布」，过去却只渲染 habitat —— 删掉按科硬编码表后必须补上，
+                否则这张卡的内容反而比以前更少（旧硬编码文案里大半是分布描述） */}
+            {Boolean(animal.distribution) && (
+              <View style={styles.subSection}>
+                <Text style={styles.subSectionTitle}>分布</Text>
+                <Text style={styles.cardContent}>{animal.distribution}</Text>
+              </View>
+            )}
           </Card>
 
           {/* 生活习性 */}
@@ -508,6 +555,18 @@ const styles = StyleSheet.create({
     lineHeight: 24,
     color: colors.bark,
   },
+  subSection: {
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.cream,
+  },
+  subSectionTitle: {
+    ...typography.caption,
+    color: colors.moss,
+    fontWeight: '600',
+    marginBottom: spacing.xs,
+  },
   viewTreeLink: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -558,6 +617,32 @@ const styles = StyleSheet.create({
     ...typography.bodySmall,
     color: colors.bark,
     marginLeft: spacing.sm,
+  },
+  threatBlock: {
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(216, 90, 74, 0.1)',
+  },
+  threatTitle: {
+    ...typography.caption,
+    color: colors.bark,
+    marginBottom: spacing.sm,
+  },
+  threatTags: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  threatTag: {
+    backgroundColor: colors.cream,
+    borderRadius: borderRadius.full,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+  },
+  threatTagText: {
+    ...typography.caption,
+    color: colors.bark,
   },
   bottomSpacer: {
     height: spacing.xxl,

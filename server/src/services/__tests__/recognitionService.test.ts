@@ -194,6 +194,52 @@ describe('recognizeByImage', () => {
 
     expect(result.animal.commonNameZh).toBe('虎');
     expect(result.animal.taxonomy?.family?.scientificName).toBe('Felidae');
-    expect(result.dataSources).toEqual({ taxonomy: 'llm', conservation: 'none' });
+    expect(result.dataSources).toEqual({ taxonomy: 'llm', conservation: 'none', narrative: 'none' });
+  });
+
+  it('carries the llm-written habitat, lifestyle and distribution through, and labels them', async () => {
+    setConservationProviderOverride(conservationProvider(null));
+    installFetch({
+      animal: {
+        commonNameZh: '大熊猫',
+        commonNameEn: 'Giant Panda',
+        scientificName: 'Ailuropoda melanoleuca',
+        habitat: '  四川、陕西和甘肃的高山竹林，海拔 1200-3400 米。  ',
+        lifestyle: '独居，每天进食竹子 12-16 小时。',
+        distribution: '中国中部山区。',
+      },
+      confidence: 0.9,
+    });
+
+    const result = await recognizeByImage({ image: 'data:image/jpeg;base64,abc' });
+
+    // 首尾空白必须被清掉
+    expect(result.animal.habitat).toBe('四川、陕西和甘肃的高山竹林，海拔 1200-3400 米。');
+    expect(result.animal.lifestyle).toBe('独居，每天进食竹子 12-16 小时。');
+    expect(result.animal.distribution).toBe('中国中部山区。');
+    // 叙述性字段来自模型，必须与 ITIS/IUCN 的来源分开标注
+    expect(result.dataSources.narrative).toBe('llm');
+  });
+
+  it('omits narrative fields the llm left blank instead of inventing a placeholder', async () => {
+    setConservationProviderOverride(conservationProvider(null));
+    installFetch({
+      animal: {
+        commonNameZh: '虎',
+        commonNameEn: 'Tiger',
+        scientificName: 'Panthera tigris',
+        habitat: '',
+        lifestyle: '   ',
+      },
+      confidence: 0.9,
+    });
+
+    const result = await recognizeByImage({ image: 'data:image/jpeg;base64,abc' });
+
+    // 空串与纯空白都等于「没写」：字段整个消失，交给 UI 不渲染
+    expect(result.animal).not.toHaveProperty('habitat');
+    expect(result.animal).not.toHaveProperty('lifestyle');
+    expect(result.animal).not.toHaveProperty('distribution');
+    expect(result.dataSources.narrative).toBe('none');
   });
 });

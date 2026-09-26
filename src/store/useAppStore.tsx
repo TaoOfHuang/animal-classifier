@@ -9,17 +9,10 @@ import React, {
   useCallback,
   useMemo,
 } from 'react';
-import { Animal } from '../types';
+import { Animal, RecentAnimalRecord } from '../types';
 import * as storageService from '../services/storageService';
 
 // ==================== 类型定义 ====================
-
-interface RecentAnimal {
-  id: string;
-  commonNameZh: string;
-  thumbnailUrl?: string;
-  timestamp: number;
-}
 
 interface AppSettings {
   theme: 'light' | 'dark' | 'system';
@@ -35,7 +28,7 @@ interface AppState {
   favoritesLoading: boolean;
 
   // 最近浏览
-  recentAnimals: RecentAnimal[];
+  recentAnimals: RecentAnimalRecord[];
   recentLoading: boolean;
 
   // 搜索历史
@@ -69,8 +62,8 @@ type AppAction =
   | { type: 'SET_FAVORITES'; payload: string[] }
   | { type: 'ADD_FAVORITE'; payload: string }
   | { type: 'REMOVE_FAVORITE'; payload: string }
-  | { type: 'SET_RECENT_ANIMALS'; payload: RecentAnimal[] }
-  | { type: 'ADD_RECENT_ANIMAL'; payload: RecentAnimal }
+  | { type: 'SET_RECENT_ANIMALS'; payload: RecentAnimalRecord[] }
+  | { type: 'ADD_RECENT_ANIMAL'; payload: RecentAnimalRecord }
   | { type: 'CLEAR_RECENT_ANIMALS' }
   | { type: 'SET_SEARCH_HISTORY'; payload: string[] }
   | { type: 'ADD_SEARCH_HISTORY'; payload: string }
@@ -215,11 +208,9 @@ interface AppContextValue {
   isFavorite: (animalId: string) => boolean;
 
   // 最近浏览操作
-  addRecentAnimal: (animal: {
-    id: string;
-    commonNameZh: string;
-    thumbnailUrl?: string;
-  }) => Promise<void>;
+  addRecentAnimal: (
+    animal: Omit<RecentAnimalRecord, 'timestamp'>,
+  ) => Promise<void>;
   clearRecentAnimals: () => Promise<void>;
 
   // 搜索历史操作
@@ -300,11 +291,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
 
   // 最近浏览操作
   const addRecentAnimal = useCallback(
-    async (animal: {
-      id: string;
-      commonNameZh: string;
-      thumbnailUrl?: string;
-    }) => {
+    async (animal: Omit<RecentAnimalRecord, 'timestamp'>) => {
       const recentAnimal = { ...animal, timestamp: Date.now() };
       dispatch({ type: 'ADD_RECENT_ANIMAL', payload: recentAnimal });
       await storageService.addRecentAnimal(animal);

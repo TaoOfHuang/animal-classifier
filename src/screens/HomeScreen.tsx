@@ -1,6 +1,6 @@
 // 首页
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   View,
   Text,
@@ -15,9 +15,18 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList, RecentRecord } from '../types';
 import { colors, spacing, borderRadius, typography, gradients } from '../constants/theme';
 import { SearchBar, ActionCard, Icon, FallbackImage } from '../components';
+import { buildLocalAnimal } from './animalDetail';
+import { useRecentAnimals } from '../store';
 
-// 模拟数据 - 最近识别
-const MOCK_RECENT_RECORDS: RecentRecord[] = [
+// 示例数据 —— **只在本机还没有任何识别记录时**用来占位，避免首屏空掉。
+// 真实记录由 ResultScreen 识别成功后写入（见 useRecentAnimals）。
+//
+// ⚠️ 这两点别再踩：
+// 1. `animal.id` 这里是序号，不是详情接口认的学名。详情页要用学名重新解析，
+//    见 AnimalDetailScreen 的 buildDetailLookupCandidates。
+// 2. 东北虎那条的 `scientificName` 是三名亚种名，接口只认双名法，
+//    同样靠详情页的双名法回退兜住。
+const PLACEHOLDER_RECENT_RECORDS: RecentRecord[] = [
   {
     id: '1',
     animal: {
@@ -112,6 +121,31 @@ type HomeScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'H
 
 export const HomeScreen: React.FC = () => {
   const navigation = useNavigation<HomeScreenNavigationProp>();
+  const { recentAnimals } = useRecentAnimals();
+
+  // 真实记录优先；一条都没有时才退回示例数据，避免首屏空掉。
+  // 记录里只存了名字/学名/图片，分类与濒危信息由详情页异步补齐。
+  const recentRecords = useMemo<RecentRecord[]>(() => {
+    if (recentAnimals.length === 0) {
+      return PLACEHOLDER_RECENT_RECORDS;
+    }
+
+    return recentAnimals.map(record => ({
+      id: record.id,
+      animal: buildLocalAnimal({
+        id: record.id,
+        commonNameZh: record.commonNameZh,
+        commonNameEn: record.commonNameEn,
+        scientificName: record.scientificName,
+        thumbnailUrl: record.thumbnailUrl,
+        images: record.thumbnailUrl ? [record.thumbnailUrl] : undefined,
+      }),
+      // 优先用识别时那张照片；拍的照片可能已被清理，此时退回缩略图
+      imageUri: record.imageUri ?? record.thumbnailUrl ?? '',
+      timestamp: record.timestamp,
+      confidence: record.confidence ?? 0,
+    }));
+  }, [recentAnimals]);
 
   const handleSearch = () => {
     navigation.navigate('Search');
@@ -186,7 +220,7 @@ export const HomeScreen: React.FC = () => {
         </View>
 
         {/* 最近识别 */}
-        {MOCK_RECENT_RECORDS.length > 0 && (
+        {recentRecords.length > 0 && (
           <View style={styles.recentSection}>
             <View style={styles.sectionHeader}>
               <View style={styles.sectionIndicator} />
@@ -197,7 +231,7 @@ export const HomeScreen: React.FC = () => {
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.recentList}
             >
-              {MOCK_RECENT_RECORDS.map((record) => (
+              {recentRecords.map((record) => (
                 <TouchableOpacity
                   key={record.id}
                   onPress={() => handleRecentItemPress(record)}

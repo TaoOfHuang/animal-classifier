@@ -76,3 +76,39 @@ IUCN ToU 明确写明 API 面向教育/研究用途，且提到
 "may need to restrict access if … such as mobile app development"。
 因此本项目默认 `CONSERVATION_SOURCE=static`（离线数据集），
 在线 v4 仅作为**可切换选项**，不作为唯一依赖。
+
+## 6. `GET /assessment/{id}` 完整字段清单（2026-09-26 补测）
+
+实测对象：虎（*Panthera tigris*），`assessment_id=214862019`，**33 个顶层字段**。
+
+本 Provider 只映射其中 5 个（见第 4 节）。**以下字段一直返回但从未被取用**，
+想知道 IUCN 还能提供什么时先看这里，不要再重新探接口：
+
+| 字段 | 内容 | 备注 |
+|------|------|------|
+| `habitats[]` | **栖息地分类方案**，虎 21 条 | `{code:"1_9", description:{en:"Forest - Subtropical/Tropical Moist Montane"}, majorImportance, season, suitability}` |
+| `documentation.habitats` | 官网「Habitat and Ecology」**叙述段落** | HTML（`<p>` 包裹），需去标签 |
+| `systems` | 陆生/淡水/海洋 | `[{description:{en:"Terrestrial"}, code:"0"}]` |
+| `biogeographical_realms` | 生物地理区 | |
+| `documentation.*` | `range` / `population` / `threats` / `measures` / `use_trade` / `rationale` / `taxonomic_notes` | 全是叙述文本 |
+| `conservation_actions` / `use_and_trade` / `researches` / `locations` / `growth_forms` / `lmes` / `scopes` / `stresses` / `errata` / `credits` / `references` | 结构化或引用信息 | 未评估用途 |
+
+**没有的**：IUCN 不提供「生活习性」类字段。食性、繁殖、社会结构属于百科内容，
+IUCN 报告只覆盖栖息地、种群、威胁、保护措施这几个维度。
+
+### `threats[]` 的结构与语言（影响前端展示）
+
+```json
+{"code":"5_1_3","description":{"en":"Persecution/control"},
+ "scope":"Minority (<50%)","timing":"Ongoing","score":"Medium Impact: 6",
+ "severity":"Rapid Declines","text":null}
+```
+
+- 取的是 `description.en`，**是英文**。
+- `AssessmentResponse` 的类型里没有声明 `code` / `scope` / `timing` / `score` / `severity`，
+  但报文里确实存在 —— 要用得先补类型。
+- ⚠️ **`static` 离线数据集里的 threats 是中文**（如「栖息地破坏」「偷猎」），
+  而 `iucn_v4` 给的是英文。前端一旦渲染 threats，**切换数据源会导致语言不一致**。
+  若要中文，得用 IUCN 威胁分类方案的官方中文对照表按 `code` 映射 ——
+  **没有现成权威中文源之前不要自己编译文**。
+

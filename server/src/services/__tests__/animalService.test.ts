@@ -163,8 +163,41 @@ describe('enrichAnimal', () => {
       taxonomy: { family: { scientificName: 'Felidae', commonNameZh: '猫科' } },
     });
 
-    expect(result.dataSources).toEqual({ taxonomy: 'llm', conservation: 'none' });
+    expect(result.dataSources).toEqual({ taxonomy: 'llm', conservation: 'none', narrative: 'none' });
     expect(result.taxonomy?.family?.scientificName).toBe('Felidae');
+  });
+
+  it('keeps the llm narrative through the itis lineage and labels its source', async () => {
+    installFetchMock(createFetchMock({ routes: ITIS_ROUTES }));
+    setConservationProviderOverride(providerReturning(null));
+
+    const result = await enrichAnimal({
+      id: 'Panthera tigris',
+      commonNameZh: '虎',
+      scientificName: 'Panthera tigris',
+      habitat: '针阔混交林与落叶阔叶林。',
+      lifestyle: '独居，晨昏活动。',
+      distribution: '俄罗斯远东、中国东北及朝鲜北部。',
+    });
+
+    // applyLineage 用展开语法合并，叙述性字段不能被 ITIS 结果冲掉
+    expect(result.habitat).toBe('针阔混交林与落叶阔叶林。');
+    expect(result.lifestyle).toBe('独居，晨昏活动。');
+    expect(result.distribution).toBe('俄罗斯远东、中国东北及朝鲜北部。');
+    expect(result.dataSources.narrative).toBe('llm');
+  });
+
+  it('marks narrative as none when nothing was written', async () => {
+    installFetchMock(createFetchMock({ routes: ITIS_ROUTES }));
+    setConservationProviderOverride(providerReturning(null));
+
+    const result = await enrichAnimal({
+      id: 'Panthera tigris',
+      commonNameZh: '虎',
+      scientificName: 'Panthera tigris',
+    });
+
+    expect(result.dataSources.narrative).toBe('none');
   });
 
   it('does not call upstreams when there is no scientific name', async () => {

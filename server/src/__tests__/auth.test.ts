@@ -63,7 +63,7 @@ describe('POST /api/recognize —— 设备令牌鉴权', () => {
         taxonomy: {},
       },
       confidence: 1,
-      dataSources: { taxonomy: 'none', conservation: 'none' },
+      dataSources: { taxonomy: 'none', conservation: 'none', narrative: 'none' },
     });
   });
 

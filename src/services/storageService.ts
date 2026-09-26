@@ -3,7 +3,7 @@
 // 提供统一的缓存接口
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Animal, TaxonomyNode } from '../types';
+import { Animal, RecentAnimalRecord, TaxonomyNode } from '../types';
 
 // 缓存键前缀
 const CACHE_KEYS = {
@@ -184,14 +184,7 @@ export const isFavorite = async (animalId: string): Promise<boolean> => {
 
 // === 最近浏览 ===
 
-interface RecentAnimal {
-  id: string;
-  commonNameZh: string;
-  thumbnailUrl?: string;
-  timestamp: number;
-}
-
-export const getRecentAnimals = async (): Promise<RecentAnimal[]> => {
+export const getRecentAnimals = async (): Promise<RecentAnimalRecord[]> => {
   try {
     const value = await AsyncStorage.getItem(CACHE_KEYS.RECENT_ANIMALS);
     return value ? JSON.parse(value) : [];
@@ -201,15 +194,13 @@ export const getRecentAnimals = async (): Promise<RecentAnimal[]> => {
   }
 };
 
-export const addRecentAnimal = async (animal: {
-  id: string;
-  commonNameZh: string;
-  thumbnailUrl?: string;
-}): Promise<void> => {
+export const addRecentAnimal = async (
+  animal: Omit<RecentAnimalRecord, 'timestamp'>,
+): Promise<void> => {
   try {
     const recent = await getRecentAnimals();
     const filtered = recent.filter(item => item.id !== animal.id);
-    const updated: RecentAnimal[] = [
+    const updated: RecentAnimalRecord[] = [
       { ...animal, timestamp: Date.now() },
       ...filtered,
     ].slice(0, 50);

@@ -30,7 +30,7 @@ describe('POST /api/recognize', () => {
         taxonomy: {},
       },
       confidence: 0.87,
-      dataSources: { taxonomy: 'llm', conservation: 'static' },
+      dataSources: { taxonomy: 'llm', conservation: 'static', narrative: 'llm' },
     });
 
     // 鉴权是强制的（不再有「无 token 模式」），所以先注册一台设备

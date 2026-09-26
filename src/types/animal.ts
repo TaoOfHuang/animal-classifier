@@ -92,3 +92,22 @@ export interface RecentRecord {
   timestamp: number;
   confidence: number;
 }
+
+/**
+ * 持久化的「最近识别」记录。
+ *
+ * 存的内容必须足以让首页点回详情页：
+ * - `id` 用**学名**（详情接口 `/api/animal/:id` 的 key 约定），否则回跳会 404
+ * - 学名 / 中英文名 / 图片 / 置信度用于离线渲染
+ * - 分类、濒危等信息不在本地存储里，由详情页异步补齐
+ */
+export interface RecentAnimalRecord {
+  id: string;
+  commonNameZh: string;
+  commonNameEn?: string;
+  scientificName?: string;
+  thumbnailUrl?: string;
+  imageUri?: string;
+  confidence?: number;
+  timestamp: number;
+}

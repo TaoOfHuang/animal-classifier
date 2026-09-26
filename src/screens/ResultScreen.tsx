@@ -1,6 +1,6 @@
 // 识别结果页面
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   View,
   Text,
@@ -15,6 +15,8 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
 import { colors, spacing, borderRadius, typography, gradients } from '../constants/theme';
 import { Card, TaxonomyPath, EndangeredBadge, Button, Icon, FallbackImage } from '../components';
+import { getIucnLabel, isConcerningStatus, toBinomialName } from './animalDetail';
+import { useRecentAnimals } from '../store';
 
 type ResultRouteProp = RouteProp<RootStackParamList, 'Result'>;
 type ResultNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Result'>;
@@ -24,6 +26,32 @@ export const ResultScreen: React.FC = () => {
   const route = useRoute<ResultRouteProp>();
   const { result, imageUri } = route.params;
   const { animal, confidence } = result;
+
+  const { addRecentAnimal } = useRecentAnimals();
+
+  // 写入「最近识别」（首页那个区域读的就是它）。
+  // 识别页在成功后是 replace 到本页的，所以本页挂载 == 一次成功的识别，只需记一次。
+  useEffect(() => {
+    // id 用**学名**：详情接口 /api/animal/:id 就是按学名查的，
+    // 存序号会导致从首页点回详情页时报 No animal found。
+    // 亚种名（三名法）接口不认，统一收成双名法，与详情页的查询候选保持一致。
+    const lookupId = toBinomialName(animal.scientificName) || animal.id;
+
+    addRecentAnimal({
+      id: lookupId || 'unknown',
+      commonNameZh: animal.commonNameZh,
+      commonNameEn: animal.commonNameEn,
+      scientificName: animal.scientificName,
+      thumbnailUrl: animal.thumbnailUrl ?? animal.images?.[0],
+      imageUri,
+      confidence,
+    }).catch(error => {
+      // 记录最近识别失败不能影响结果页展示，只记日志
+      console.error('[Result] failed to record recent animal:', error);
+    });
+    // 只在挂载时记录一次；重复导航不该重复写
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleGoBack = () => {
     navigation.navigate('Home');
@@ -37,9 +65,17 @@ export const ResultScreen: React.FC = () => {
     navigation.navigate('TaxonomyTree', { animal });
   };
 
-  const isEndangered = ['CR', 'EN', 'VU'].includes(
-    animal.conservationStatus?.iucnStatus || ''
-  );
+  // 与详情页对齐：EX / EW 同样属于「需要展示保护状态」的等级。
+  // 历史上这里只判 CR/EN/VU，会把灭绝与野外灭绝当成「不濒危」。
+  const isEndangered =
+    isConcerningStatus(animal.conservationStatus?.iucnStatus) &&
+    Boolean(animal.conservationStatus);
+
+  // 等级中文名一律查表，不要用「EN ? 濒危 : 易危」这种二元判断（会把 CR 说成易危）
+  const statusLabel = getIucnLabel(animal.conservationStatus?.iucnStatus);
+  const isExtinct =
+    animal.conservationStatus?.iucnStatus === 'EX' ||
+    animal.conservationStatus?.iucnStatus === 'EW';
 
   const confidencePercent = (confidence * 100).toFixed(1);
 
@@ -118,8 +154,11 @@ export const ResultScreen: React.FC = () => {
                 size="medium"
               />
               <Text style={styles.endangeredText}>
-                {animal.commonNameZh}是现存{animal.conservationStatus.iucnStatus === 'EN' ? '濒危' : '易危'}物种，
-                被列入《世界自然保护联盟》濒危物种红色名录。
+                {`${animal.commonNameZh}被《世界自然保护联盟》濒危物种红色名录评估为${statusLabel}（${
+                  animal.conservationStatus.iucnStatus
+                }）${
+                  isExtinct ? '，野外已难以维系种群。' : '，需要重点保护。'
+                }`}
               </Text>
               {animal.conservationStatus.population && (
                 <View style={styles.populationStat}>
